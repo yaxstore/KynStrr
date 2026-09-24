@@ -9,7 +9,7 @@ export default async function handler(req, res) {
         debugLog.push('step 3: Buffer OK, length=' + buf.length);
         const AES_KEY = Buffer.from([89, 103, 38, 116, 99, 37, 68, 69, 117, 104, 54, 37, 90, 99, 94, 56]);
         const AES_IV  = Buffer.from([54, 111, 121, 90, 68, 114, 50, 50, 69, 51, 121, 99, 104, 106, 77, 37]);
-        const cipher = crypto.createCipheriv('aes-256-cbc', AES_KEY, AES_IV);
+        const cipher = crypto.createCipheriv('aes-128-cbc', AES_KEY, AES_IV);
         debugLog.push('step 4: cipher created OK');
         debugLog.push('step 5: testing fetch...');
         const testResp = await fetch('https://100067.connect.garena.com/api/v2/oauth/guest:register', {
