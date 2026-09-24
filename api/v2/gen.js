@@ -6,9 +6,6 @@
 
 import crypto from 'node:crypto';
 
-// ============================================================
-// KONFIGURASI
-// ============================================================
 const API_SECRET_KEY = "2ee44819e9b4598845141067b281621874d0d5d7af9d8f7e00c1e54715b7d1e3";
 const AES_KEY = Buffer.from([89, 103, 38, 116, 99, 37, 68, 69, 117, 104, 54, 37, 90, 99, 94, 56]);
 const AES_IV  = Buffer.from([54, 111, 121, 90, 68, 114, 50, 50, 69, 51, 121, 99, 104, 106, 77, 37]);
@@ -22,9 +19,6 @@ const REGION_LANG = {
 const DATADOME_COOKIE_1 = "datadome=oYpIhVco_RFvLHe_T9KFd5wuY0gcQuNfrlt4rHJY5QOkwv4TGt8gPMK32MbHuBdzJyfXnXlfzNZT_2tHr2kys8AMYT2~T71QP1S78_7Pdx4JLOXdSrflPT6cOX2vsyJh";
 const DATADOME_COOKIE_2 = "datadome=y23Z3X17pgkMHEt5zY8dqxC6BIf7WJMgC0RXNbqifHT7t9zajKe_hegFb1Ie9_7JixXpz7FRGVodOn~mWPk_NrqIIhUOXDYqKOahzoRQcyEy77GWEMcdA9_MqPJeM5qv";
 
-// ============================================================
-// CRYPTO HELPERS
-// ============================================================
 function encryptApiPayload(plainHex) {
     const cipher = crypto.createCipheriv('aes-256-cbc', AES_KEY, AES_IV);
     const data = Buffer.from(plainHex, 'hex');
@@ -49,9 +43,6 @@ function randomName(prefix) {
     return `${prefix}${Math.floor(10000 + Math.random() * 90000)}`;
 }
 
-// ============================================================
-// PROTO BUILDER
-// ============================================================
 class ProtoBuilder {
     static encodeVarint(n) {
         if (n < 0) return Buffer.alloc(0);
@@ -65,7 +56,6 @@ class ProtoBuilder {
         }
         return Buffer.from(bytes);
     }
-
     static createField(fieldNum, value) {
         let header, payload;
         if (Buffer.isBuffer(value)) {
@@ -86,7 +76,6 @@ class ProtoBuilder {
         }
         return Buffer.alloc(0);
     }
-
     static build(fields) {
         const parts = [];
         for (const k of Object.keys(fields)) parts.push(this.createField(parseInt(k, 10), fields[k]));
@@ -94,9 +83,6 @@ class ProtoBuilder {
     }
 }
 
-// ============================================================
-// XOR ENCODE (untuk field #14 di MajorRegister)
-// ============================================================
 function xorEncode(openId) {
     const keystream = [0x30,0x30,0x30,0x32,0x30,0x31,0x37,0x30,0x30,0x30,0x30,0x30,0x32,0x30,0x31,0x37,
                        0x30,0x30,0x30,0x30,0x30,0x32,0x30,0x31,0x37,0x30,0x30,0x30,0x30,0x30,0x32,0x30];
@@ -107,9 +93,6 @@ function xorEncode(openId) {
     return out;
 }
 
-// ============================================================
-// HTTP HELPERS
-// ============================================================
 function baseHeaders() {
     return {
         'User-Agent': 'GarenaMSDK/4.0.44(25028RN03A ;Android 15;ar;EG;app 1.132.1 2019121229;)',
@@ -128,9 +111,6 @@ async function safeJson(resp) {
     }
 }
 
-// ============================================================
-// GARENA FLOW
-// ============================================================
 async function registerGuest(password) {
     const regPayload = JSON.stringify({
         app_id: 100067,
@@ -145,430 +125,18 @@ async function registerGuest(password) {
         'Cookie': DATADOME_COOKIE_1,
         'Host': '100067.connect.garena.com'
     };
+    console.log('[registerGuest] sending...');
     const resp = await fetch('https://100067.connect.garena.com/api/v2/oauth/guest:register', {
         method: 'POST',
         headers,
         body: regPayload
     });
-    const data = await safeJson(resp);
-    if (!data || data.code !== 0) return null;
-    return { uid: data.data.uid };
-}
-
-async function grantToken(uid, password) {
-    const tokPayload = JSON.stringify({
-        client_id: 100067,
-        client_secret: API_SECRET_KEY,
-        client_type: 2,
-        device_id: '02-344afb0e-593c-40b7-92f2-171972f74807',
-        password: password,
-        response_type: 'token',
-        uid: uid
-    });
-    const headers = {
-        ...baseHeaders(),
-        'Authorization': `Signature ${generateSignature(tokPayload)}`,
-        'Content-Type': 'application/json; charset=utf-8',
-        'Cookie': DATADOME_COOKIE_2,
-        'Host': '100067.connect.garena.com'
-    };
-    const resp = await fetch('https://100067.connect.garena.com/api/v2/oauth/guest/token:grant', {
-        method: 'POST',
-        headers,
-        body: tokPayload
-    });
-    const data = await safeJson(resp);
-    if (!data || data.code !== 0) return null;
-    return {
-        access_token: data.data.access_token,
-        open_id: data.data.open_id
-    };
-}
-
-async function majorRegister(accessToken, openId, name, lang) {
-    const field14 = xorEncode(openId);
-    const proto = ProtoBuilder.build({
-        1: name,
-        2: accessToken,
-        3: openId,
-        5: 102000007,
-        6: 4,
-        7: 1,
-        13: 1,
-        14: field14,
-        15: lang,
-        16: 1,
-        17: 1
-    });
-    const encMajor = Buffer.from(encryptApiPayload(proto.toString('hex')), 'hex');
-    const headers = {
-        'User-Agent': 'UnityPlayer/2018.4.12f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)',
-        'Accept-Encoding': 'deflate, gzip',
-        'X-GA-SV': '1789535859',
-        'Authorization': 'Bearer',
-        'X-GA': 'v1 1',
-        'ReleaseVersion': 'OB55',
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'X-Unity-Version': '2018.4.12f1',
-        'Host': 'loginbp.ppmainecoonghj.com'
-    };
-    const resp = await fetch('https://loginbp.ppmainecoonghj.com/MajorRegister', {
-        method: 'POST',
-        headers,
-        body: encMajor
-    });
-    return resp.status === 200;
-}
-
-async function majorLogin(accessToken, openId, lang) {
-    const prefix = Buffer.from([
-        0x1a, 0x13, 0x32,0x30,0x32,0x35,0x2d,0x30,0x38,0x2d,0x33,0x30,0x20,0x30,0x35,0x3a,
-        0x31,0x39,0x3a,0x32,0x31,0x22,0x09,0x66,0x72,0x65,0x65,0x20,0x66,0x69,0x72,0x65,
-        0x28,0x01,0x3a,0x08,0x31,0x2e,0x31,0x31,0x34,0x2e,0x31,0x33,0x42,0x32,0x41,0x6e,
-        0x64,0x72,0x6f,0x69,0x64,0x20,0x4f,0x53,0x20,0x39,0x20,0x2f,0x20,0x41,0x50,0x49,
-        0x2d,0x32,0x38,0x20,0x28,0x50,0x49,0x2f,0x72,0x65,0x6c,0x2e,0x63,0x6a,0x77,0x2e,
-        0x32,0x30,0x32,0x32,0x30,0x35,0x31,0x38,0x2e,0x31,0x31,0x34,0x31,0x33,0x33,0x29,
-        0x4a,0x08,0x48,0x61,0x6e,0x64,0x68,0x65,0x6c,0x64,0x52,0x0a,0x41,0x54,0x4d,0x20,
-        0x4d,0x6f,0x62,0x69,0x6c,0x73,0x5a,0x04,0x57,0x49,0x46,0x49,0x60,0xb6,0x0a,0x68,
-        0xee,0x05,0x72,0x03,0x33,0x30,0x30,0x7a,0x1f,0x41,0x52,0x4d,0x76,0x37,0x20,0x56,
-        0x46,0x50,0x76,0x33,0x20,0x4e,0x45,0x4f,0x4e,0x20,0x56,0x4d,0x48,0x20,0x7c,0x20,
-        0x32,0x34,0x30,0x30,0x20,0x7c,0x20,0x32,0x80,0x01,0xc9,0x0f,0x8a,0x01,0x0f,0x41,
-        0x64,0x72,0x65,0x6e,0x6f,0x20,0x28,0x54,0x4d,0x29,0x20,0x36,0x34,0x30,0x92,0x01,
-        0x0d,0x4f,0x70,0x65,0x6e,0x47,0x4c,0x20,0x45,0x53,0x20,0x33,0x2e,0x32,0x9a,0x01,
-        0x2b,0x47,0x6f,0x6f,0x67,0x6c,0x65,0x7c,0x64,0x66,0x61,0x34,0x61,0x62,0x34,0x62,
-        0x2d,0x39,0x64,0x63,0x34,0x2d,0x34,0x35,0x34,0x65,0x2d,0x38,0x30,0x36,0x35,0x2d,
-        0x65,0x37,0x30,0x63,0x37,0x33,0x33,0x66,0x61,0x35,0x33,0x66,0xa2,0x01,0x0e,0x31,
-        0x30,0x35,0x2e,0x32,0x33,0x35,0x2e,0x31,0x33,0x39,0x2e,0x39,0x31,0xaa,0x01,0x02
-    ]);
-    const openIdBuf = Buffer.from(openId, 'utf8');
-    const openIdPlaceholder = Buffer.from('1d8ec0240ede109973f3321b9354b44d', 'ascii');
-    const accessTokenPlaceholder = Buffer.from('afcfbf13334be42036e4f742c80b956344bed760ac91b3aff9b607a610ab4390', 'ascii');
-
-    const suffix = Buffer.from([
-        0xb2,0x01,0x20,0x31,0x64,0x38,0x65,0x63,0x30,0x32,0x34,0x30,0x65,0x64,0x65,0x31,
-        0x30,0x39,0x39,0x37,0x33,0x66,0x33,0x33,0x32,0x31,0x62,0x39,0x33,0x35,0x34,0x62,
-        0x34,0x34,0x64,0xba,0x01,0x01,0x34,0xc2,0x01,0x08,0x48,0x61,0x6e,0x64,0x68,0x65,
-        0x6c,0x64,0xca,0x01,0x10,0x41,0x73,0x75,0x73,0x20,0x41,0x53,0x55,0x53,0x5f,0x49,
-        0x30,0x30,0x35,0x44,0x41,0xea,0x01,0x40,0x61,0x66,0x63,0x66,0x62,0x66,0x31,0x33,
-        0x33,0x33,0x34,0x62,0x65,0x34,0x32,0x30,0x33,0x36,0x65,0x34,0x66,0x37,0x34,0x32,
-        0x63,0x38,0x30,0x62,0x39,0x35,0x36,0x33,0x34,0x34,0x62,0x65,0x64,0x37,0x36,0x30,
-        0x61,0x63,0x39,0x31,0x62,0x33,0x61,0x66,0x66,0x39,0x62,0x36,0x30,0x37,0x61,0x36,
-        0x31,0x30,0x61,0x62,0x34,0x33,0x39,0x30
-    ]);
-
-    const langBuf = Buffer.from(lang, 'ascii');
-
-    const head = prefix;
-    const mid = Buffer.concat([
-        Buffer.from([0xb2, 0x01, 0x20]),
-        openIdPlaceholder,
-        Buffer.from([0xba, 0x01, 0x01, 0x34, 0xc2, 0x01, 0x08, 0x48, 0x61, 0x6e, 0x64, 0x68, 0x65, 0x6c, 0x64,
-                     0xca, 0x01, 0x10, 0x41, 0x73, 0x75, 0x73, 0x20, 0x41, 0x53, 0x55, 0x53, 0x5f, 0x49,
-                     0x30, 0x30, 0x35, 0x44, 0x41, 0xea, 0x01, 0x40]),
-        accessTokenPlaceholder,
-        suffix.slice(0xea + 2 + 0x40)
-    ]);
-
-    let raw = Buffer.concat([head, langBuf, mid]);
-    raw = Buffer.concat([raw, Buffer.from([
-        0xf0,0x01,0x01,0xca,0x02,0x0a,0x41,0x54,0x4d,0x20,0x4d,0x6f,0x62,0x69,0x6c,0x73,
-        0xd2,0x02,0x04,0x57,0x49,0x46,0x49,0xca,0x03,0x20,0x37,0x34,0x32,0x38,0x62,0x32,
-        0x35,0x33,0x64,0x65,0x66,0x63,0x31,0x36,0x34,0x30,0x31,0x38,0x63,0x36,0x30,0x34,
-        0x61,0x31,0x65,0x62,0x62,0x66,0x65,0x62,0x64,0x66,0xe0,0x03,0xa8,0x81,0x02,0xe8,
-        0x03,0xf6,0xe5,0x01,0xf0,0x03,0xaf,0x13,0xf8,0x03,0x84,0x07,0x80,0x04,0xe7,0xf0,
-        0x01,0x88,0x04,0xa8,0x81,0x02,0x90,0x04,0xe7,0xf0,0x01,0x98,0x04,0xa8,0x81,0x02,
-        0xc8,0x04,0x01,0xd2,0x04,0x3d,0x2f,0x64,0x61,0x74,0x61,0x2f,0x61,0x70,0x70,0x2f,
-        0x63,0x6f,0x6d,0x2e,0x64,0x74,0x73,0x2e,0x66,0x72,0x65,0x65,0x66,0x69,0x72,0x65,
-        0x74,0x68,0x2d,0x50,0x64,0x65,0x44,0x6e,0x4f,0x69,0x6c,0x43,0x53,0x46,0x6e,0x33,
-        0x37,0x70,0x31,0x41,0x48,0x5f,0x46,0x4c,0x67,0x3d,0x3d,0x2f,0x6c,0x69,0x62,0x2f,
-        0x61,0x72,0x6d,0xe0,0x04,0x01,0xea,0x04,0x5f,0x32,0x30,0x38,0x37,0x66,0x36,0x31,
-        0x63,0x31,0x39,0x66,0x35,0x37,0x66,0x32,0x61,0x66,0x34,0x65,0x37,0x66,0x65,0x66,
-        0x66,0x30,0x62,0x32,0x34,0x64,0x39,0x64,0x39,0x7c,0x2f,0x64,0x61,0x74,0x61,0x2f,
-        0x61,0x70,0x70,0x2f,0x63,0x6f,0x6d,0x2e,0x64,0x74,0x73,0x2e,0x66,0x72,0x65,0x65,
-        0x66,0x69,0x72,0x65,0x74,0x68,0x2d,0x50,0x64,0x65,0x44,0x6e,0x4f,0x69,0x6c,0x43,
-        0x53,0x46,0x6e,0x33,0x37,0x70,0x31,0x41,0x48,0x5f,0x46,0x4c,0x67,0x3d,0x3d,0x2f,
-        0x62,0x61,0x73,0x65,0x2e,0x61,0x70,0x6b,0xf0,0x04,0x03,0xf8,0x04,0x01,0x8a,0x05,
-        0x02,0x33,0x32,0x9a,0x05,0x0a,0x32,0x30,0x31,0x39,0x31,0x31,0x38,0x36,0x39,0x33,
-        0xb2,0x05,0x09,0x4f,0x70,0x65,0x6e,0x47,0x4c,0x45,0x53,0x32,0xb8,0x05,0xff,0x7f,
-        0xc0,0x05,0x04,0xe0,0x05,0xf3,0x46,0xea,0x05,0x07,0x61,0x6e,0x64,0x72,0x6f,0x69,
-        0x64,0xf2,0x05,0x70,0x4b,0x71,0x73,0x48,0x54,0x35,0x5a,0x4c,0x57,0x72,0x59,0x6c,
-        0x6a,0x4e,0x62,0x35,0x56,0x71,0x68,0x2f,0x2f,0x79,0x46,0x52,0x6c,0x61,0x50,0x48,
-        0x53,0x4f,0x39,0x4e,0x57,0x53,0x51,0x73,0x56,0x76,0x4f,0x6d,0x64,0x68,0x45,0x45,
-        0x6e,0x37,0x57,0x2b,0x56,0x48,0x4e,0x55,0x4b,0x2b,0x51,0x2b,0x66,0x64,0x75,0x41,
-        0x33,0x70,0x74,0x4e,0x72,0x47,0x42,0x30,0x4c,0x6c,0x30,0x4c,0x52,0x7a,0x33,0x57,
-        0x57,0x30,0x6a,0x4f,0x77,0x65,0x73,0x4c,0x6a,0x36,0x61,0x69,0x55,0x37,0x73,0x5a,
-        0x34,0x30,0x70,0x38,0x42,0x66,0x55,0x45,0x2f,0x46,0x49,0x2f,0x6a,0x7a,0x53,0x54,
-        0x77,0x52,0x65,0x32,0xf8,0x05,0xfb,0xe4,0x06,0x88,0x06,0x01,0x90,0x06,0x01,0x9a,
-        0x06,0x01,0x34,0xa2,0x06,0x01,0x34,0xb2,0x06,0x22,0x47,0x51,0x40,0x4f,0x00,0x0e,
-        0x5e,0x00,0x44,0x06,0x55,0x41,0x0e,0x50,0x4d,0x0d,0x13,0x68,0x5a,0x07,0x54,0x06,
-        0x0c,0x6d,0x5c,0x56,0x0e,0x6a,0x59,0x56,0x3b,0x0b,0x55,0x35
-    ])]);
-
-    const placeAT = Buffer.from(accessToken, 'utf8');
-    const idxOpen = raw.indexOf(openIdPlaceholder);
-    const idxAT = raw.indexOf(accessTokenPlaceholder);
-
-    if (idxOpen >= 0 && idxAT >= 0) {
-        const before = raw.slice(0, Math.min(idxOpen, idxAT));
-        const between = raw.slice(Math.min(idxOpen, idxAT) + (idxOpen < idxAT ? openIdPlaceholder.length : accessTokenPlaceholder.length), Math.max(idxOpen, idxAT));
-        const after = raw.slice(Math.max(idxOpen, idxAT) + (idxOpen < idxAT ? accessTokenPlaceholder.length : openIdPlaceholder.length));
-        // preserve order: openId first then accessToken (as in prefix layout)
-        if (idxOpen < idxAT) {
-            raw = Buffer.concat([before, openIdBuf, between, placeAT, after]);
-        } else {
-            raw = Buffer.concat([before, placeAT, between, openIdBuf, after]);
-        }
-    }
-
-    const encMajor = Buffer.from(encryptApiPayload(raw.toString('hex')), 'hex');
-    const headers = {
-        'User-Agent': 'UnityPlayer/2018.4.12f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)',
-        'Accept-Encoding': 'deflate, gzip',
-        'X-GA-SV': '1789535859',
-        'Authorization': 'Bearer',
-        'X-GA': 'v1 1',
-        'ReleaseVersion': 'OB55',
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'X-Unity-Version': '2018.4.12f1'
-    };
-    const resp = await fetch('https://loginbp.ppmainecoonghj.com/MajorLogin', {
-        method: 'POST',
-        headers,
-        body: encMajor
-    });
-    const text = await resp.text();
-    const jwtIdx = text.indexOf('eyJ');
-    if (jwtIdx === -1) return null;
-    let token = text.slice(jwtIdx);
-    const firstDot = token.indexOf('.');
-    const secondDot = token.indexOf('.', firstDot + 1);
-    if (secondDot === -1) return null;
-    token = token.slice(0, secondDot + 44);
-    try {
-        const payloadB64 = token.split('.')[1];
-        const padding = '='.repeat((4 - (payloadB64.length % 4)) % 4);
-        const decoded = JSON.parse(Buffer.from(payloadB64 + padding, 'base64').toString('utf8'));
-        const accId = decoded.account_id || decoded.external_id;
-        if (!accId) return null;
-        return { account_id: String(accId), jwt_token: token };
-    } catch {
-        return null;
-    }
-}
-
-// ============================================================
-// MAIN FLOW
-// ============================================================
-async function createAccount(region, namePrefix) {
-    for (let attempt = 0; attempt < 5; attempt++) {
-        try {
-            const password = generateSecurePassword();
-            const name = randomName(namePrefix);
-            const lang = REGION_LANG[region.toUpperCase()] || 'en';
-
-            const reg = await registerGuest(password);
-            if (!reg) continue;
-
-            const tok = await grantToken(reg.uid, password);
-            if (!tok) continue;
-
-            await majorRegister(tok.access_token, tok.open_id, name, lang);
-
-            const login = await majorLogin(tok.access_token, tok.open_id, lang);
-            if (!login) continue;
-
-            return {
-                uid: reg.uid,
-                password: password,
-                name: name,
-                account_id: login.account_id,
-                jwt_token: login.jwt_token,
-                region: region.toUpperCase()
-            };
-        } catch (e) {
-            // silent retry
-        }
-    }
-    return null;
-}
-
-// ============================================================
-// HANDLER
-// ============================================================
-export default async function handler(req, res) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-    if (req.method === 'OPTIONS') {
-        return res.status(200).end();
-    }
-// ============================================================
-//  KynStrr - GARENA ACCOUNT GENERATOR API
-//  Ported from Yax Store 1.py (Opsi A)
-//  Runtime: Node.js (Vercel Serverless)
-//  + FULL DEBUG LOGGING
-// ============================================================
-
-import crypto from 'node:crypto';
-
-// ============================================================
-// KONFIGURASI
-// ============================================================
-const API_SECRET_KEY = "2ee44819e9b4598845141067b281621874d0d5d7af9d8f7e00c1e54715b7d1e3";
-const AES_KEY = Buffer.from([89, 103, 38, 116, 99, 37, 68, 69, 117, 104, 54, 37, 90, 99, 94, 56]);
-const AES_IV  = Buffer.from([54, 111, 121, 90, 68, 114, 50, 50, 69, 51, 121, 99, 104, 106, 77, 37]);
-
-const REGION_LANG = {
-    BD: "bn", IND: "hi", PK: "ur", SG: "en", ID: "id",
-    ME: "ar", CIS: "ru", TH: "th", EU: "en", US: "en",
-    SAC: "es", LK: "en", VN: "vi", TW: "zh", GHOST: "en"
-};
-
-const DATADOME_COOKIE_1 = "datadome=oYpIhVco_RFvLHe_T9KFd5wuY0gcQuNfrlt4rHJY5QOkwv4TGt8gPMK32MbHuBdzJyfXnXlfzNZT_2tHr2kys8AMYT2~T71QP1S78_7Pdx4JLOXdSrflPT6cOX2vsyJh";
-const DATADOME_COOKIE_2 = "datadome=y23Z3X17pgkMHEt5zY8dqxC6BIf7WJMgC0RXNbqifHT7t9zajKe_hegFb1Ie9_7JixXpz7FRGVodOn~mWPk_NrqIIhUOXDYqKOahzoRQcyEy77GWEMcdA9_MqPJeM5qv";
-
-// ============================================================
-// CRYPTO HELPERS
-// ============================================================
-function encryptApiPayload(plainHex) {
-    const cipher = crypto.createCipheriv('aes-256-cbc', AES_KEY, AES_IV);
-    const data = Buffer.from(plainHex, 'hex');
-    const padLen = 16 - (data.length % 16);
-    const padded = Buffer.concat([data, Buffer.alloc(padLen, padLen)]);
-    return Buffer.concat([cipher.update(padded), cipher.final()]).toString('hex');
-}
-
-function generateSignature(payload) {
-    return crypto.createHmac('sha256', API_SECRET_KEY).update(payload).digest('hex');
-}
-
-function generateSecurePassword() {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let s = '';
-    const bytes = crypto.randomBytes(12);
-    for (let i = 0; i < 12; i++) s += chars[bytes[i] % chars.length];
-    return `Yax_${s}`;
-}
-
-function randomName(prefix) {
-    return `${prefix}${Math.floor(10000 + Math.random() * 90000)}`;
-}
-
-// ============================================================
-// PROTO BUILDER
-// ============================================================
-class ProtoBuilder {
-    static encodeVarint(n) {
-        if (n < 0) return Buffer.alloc(0);
-        const bytes = [];
-        while (true) {
-            let b = n & 0x7f;
-            n = Math.floor(n / 128);
-            if (n) b |= 0x80;
-            bytes.push(b);
-            if (!n) break;
-        }
-        return Buffer.from(bytes);
-    }
-
-    static createField(fieldNum, value) {
-        let header, payload;
-        if (Buffer.isBuffer(value)) {
-            header = this.encodeVarint((fieldNum << 3) | 2);
-            payload = Buffer.concat([this.encodeVarint(value.length), value]);
-            return Buffer.concat([header, payload]);
-        } else if (typeof value === 'number') {
-            header = this.encodeVarint((fieldNum << 3) | 0);
-            return Buffer.concat([header, this.encodeVarint(value)]);
-        } else if (typeof value === 'string') {
-            const buf = Buffer.from(value, 'utf8');
-            header = this.encodeVarint((fieldNum << 3) | 2);
-            return Buffer.concat([header, this.encodeVarint(buf.length), buf]);
-        } else if (value && typeof value === 'object') {
-            const nested = this.build(value);
-            header = this.encodeVarint((fieldNum << 3) | 2);
-            return Buffer.concat([header, this.encodeVarint(nested.length), nested]);
-        }
-        return Buffer.alloc(0);
-    }
-
-    static build(fields) {
-        const parts = [];
-        for (const k of Object.keys(fields)) parts.push(this.createField(parseInt(k, 10), fields[k]));
-        return Buffer.concat(parts);
-    }
-}
-
-// ============================================================
-// XOR ENCODE (untuk field #14 di MajorRegister)
-// ============================================================
-function xorEncode(openId) {
-    const keystream = [0x30,0x30,0x30,0x32,0x30,0x31,0x37,0x30,0x30,0x30,0x30,0x30,0x32,0x30,0x31,0x37,
-                       0x30,0x30,0x30,0x30,0x30,0x32,0x30,0x31,0x37,0x30,0x30,0x30,0x30,0x30,0x32,0x30];
-    const out = Buffer.alloc(openId.length);
-    for (let i = 0; i < openId.length; i++) {
-        out[i] = openId.charCodeAt(i) ^ keystream[i % keystream.length];
-    }
-    return out;
-}
-
-// ============================================================
-// HTTP HELPERS
-// ============================================================
-function baseHeaders() {
-    return {
-        'User-Agent': 'GarenaMSDK/4.0.44(25028RN03A ;Android 15;ar;EG;app 1.132.1 2019121229;)',
-        'Connection': 'Keep-Alive',
-        'Accept': 'application/json',
-        'Accept-Encoding': 'gzip'
-    };
-}
-
-async function safeJson(resp) {
-    try {
-        const text = await resp.text();
-        return JSON.parse(text);
-    } catch {
-        return null;
-    }
-}
-
-// ============================================================
-// GARENA FLOW
-// ============================================================
-async function registerGuest(password) {
-    const regPayload = JSON.stringify({
-        app_id: 100067,
-        client_type: 2,
-        password: password,
-        source: 2
-    });
-    const headers = {
-        ...baseHeaders(),
-        'Authorization': `Signature ${generateSignature(regPayload)}`,
-        'Content-Type': 'application/json; charset=utf-8',
-        'Cookie': DATADOME_COOKIE_1,
-        'Host': '100067.connect.garena.com'
-    };
-
-    console.log('[registerGuest] POST https://100067.connect.garena.com/api/v2/oauth/guest:register');
-
-    const resp = await fetch('https://100067.connect.garena.com/api/v2/oauth/guest:register', {
-        method: 'POST',
-        headers,
-        body: regPayload
-    });
-
     const rawText = await resp.text();
-    console.log('[registerGuest] status:', resp.status);
-    console.log('[registerGuest] body:', rawText.slice(0, 500));
-
+    console.log('[registerGuest] status:', resp.status, 'body:', rawText.slice(0, 300));
     let data;
     try { data = JSON.parse(rawText); } catch { data = null; }
-
     if (!data || data.code !== 0) {
-        console.log('[registerGuest] FAILED - code:', data ? data.code : 'parse_error');
+        console.log('[registerGuest] FAILED code:', data ? data.code : 'parse_error');
         return null;
     }
     console.log('[registerGuest] OK uid:', data.data.uid);
@@ -592,24 +160,18 @@ async function grantToken(uid, password) {
         'Cookie': DATADOME_COOKIE_2,
         'Host': '100067.connect.garena.com'
     };
-
-    console.log('[grantToken] POST https://100067.connect.garena.com/api/v2/oauth/guest/token:grant');
-
+    console.log('[grantToken] sending...');
     const resp = await fetch('https://100067.connect.garena.com/api/v2/oauth/guest/token:grant', {
         method: 'POST',
         headers,
         body: tokPayload
     });
-
     const rawText = await resp.text();
-    console.log('[grantToken] status:', resp.status);
-    console.log('[grantToken] body:', rawText.slice(0, 500));
-
+    console.log('[grantToken] status:', resp.status, 'body:', rawText.slice(0, 300));
     let data;
     try { data = JSON.parse(rawText); } catch { data = null; }
-
     if (!data || data.code !== 0) {
-        console.log('[grantToken] FAILED - code:', data ? data.code : 'parse_error');
+        console.log('[grantToken] FAILED code:', data ? data.code : 'parse_error');
         return null;
     }
     console.log('[grantToken] OK');
@@ -646,19 +208,13 @@ async function majorRegister(accessToken, openId, name, lang) {
         'X-Unity-Version': '2018.4.12f1',
         'Host': 'loginbp.ppmainecoonghj.com'
     };
-
-    console.log('[majorRegister] POST https://loginbp.ppmainecoonghj.com/MajorRegister');
-
+    console.log('[majorRegister] sending...');
     const resp = await fetch('https://loginbp.ppmainecoonghj.com/MajorRegister', {
         method: 'POST',
         headers,
         body: encMajor
     });
-
-    const rawText = await resp.text();
     console.log('[majorRegister] status:', resp.status);
-    console.log('[majorRegister] body:', rawText.slice(0, 200));
-
     return resp.status === 200;
 }
 
@@ -686,28 +242,14 @@ async function majorLogin(accessToken, openId, lang) {
     const openIdPlaceholder = Buffer.from('1d8ec0240ede109973f3321b9354b44d', 'ascii');
     const accessTokenPlaceholder = Buffer.from('afcfbf13334be42036e4f742c80b956344bed760ac91b3aff9b607a610ab4390', 'ascii');
 
-    const suffix = Buffer.from([
-        0xb2,0x01,0x20,0x31,0x64,0x38,0x65,0x63,0x30,0x32,0x34,0x30,0x65,0x64,0x65,0x31,
-        0x30,0x39,0x39,0x37,0x33,0x66,0x33,0x33,0x32,0x31,0x62,0x39,0x33,0x35,0x34,0x62,
-        0x34,0x34,0x64,0xba,0x01,0x01,0x34,0xc2,0x01,0x08,0x48,0x61,0x6e,0x64,0x68,0x65,
-        0x6c,0x64,0xca,0x01,0x10,0x41,0x73,0x75,0x73,0x20,0x41,0x53,0x55,0x53,0x5f,0x49,
-        0x30,0x30,0x35,0x44,0x41,0xea,0x01,0x40,0x61,0x66,0x63,0x66,0x62,0x66,0x31,0x33,
-        0x33,0x33,0x34,0x62,0x65,0x34,0x32,0x30,0x33,0x36,0x65,0x34,0x66,0x37,0x34,0x32,
-        0x63,0x38,0x30,0x62,0x39,0x35,0x36,0x33,0x34,0x34,0x62,0x65,0x64,0x37,0x36,0x30,
-        0x61,0x63,0x39,0x31,0x62,0x33,0x61,0x66,0x66,0x39,0x62,0x36,0x30,0x37,0x61,0x36,
-        0x31,0x30,0x61,0x62,0x34,0x33,0x39,0x30
-    ]);
-
     const langBuf = Buffer.from(lang, 'ascii');
-    const head = prefix;
-
     const midHead = Buffer.from([0xb2, 0x01, 0x20]);
     const midAfterOpenId = Buffer.from([0xba, 0x01, 0x01, 0x34, 0xc2, 0x01, 0x08, 0x48, 0x61, 0x6e, 0x64, 0x68, 0x65, 0x6c, 0x64,
                                         0xca, 0x01, 0x10, 0x41, 0x73, 0x75, 0x73, 0x20, 0x41, 0x53, 0x55, 0x53, 0x5f, 0x49,
                                         0x30, 0x30, 0x35, 0x44, 0x41, 0xea, 0x01, 0x40]);
 
     let raw = Buffer.concat([
-        head,
+        prefix,
         langBuf,
         midHead,
         openIdBuf,
@@ -759,29 +301,24 @@ async function majorLogin(accessToken, openId, lang) {
         'Content-Type': 'application/x-www-form-urlencoded',
         'X-Unity-Version': '2018.4.12f1'
     };
-
-    console.log('[majorLogin] POST https://loginbp.ppmainecoonghj.com/MajorLogin');
-
+    console.log('[majorLogin] sending...');
     const resp = await fetch('https://loginbp.ppmainecoonghj.com/MajorLogin', {
         method: 'POST',
         headers,
         body: encMajor
     });
-
     const text = await resp.text();
-    console.log('[majorLogin] status:', resp.status);
-    console.log('[majorLogin] body (first 300):', text.slice(0, 300));
-
+    console.log('[majorLogin] status:', resp.status, 'body:', text.slice(0, 200));
     const jwtIdx = text.indexOf('eyJ');
     if (jwtIdx === -1) {
-        console.log('[majorLogin] FAILED - no JWT in response');
+        console.log('[majorLogin] FAILED - no JWT');
         return null;
     }
     let token = text.slice(jwtIdx);
     const firstDot = token.indexOf('.');
     const secondDot = token.indexOf('.', firstDot + 1);
     if (secondDot === -1) {
-        console.log('[majorLogin] FAILED - invalid JWT structure');
+        console.log('[majorLogin] FAILED - invalid JWT');
         return null;
     }
     token = token.slice(0, secondDot + 44);
@@ -791,7 +328,7 @@ async function majorLogin(accessToken, openId, lang) {
         const decoded = JSON.parse(Buffer.from(payloadB64 + padding, 'base64').toString('utf8'));
         const accId = decoded.account_id || decoded.external_id;
         if (!accId) {
-            console.log('[majorLogin] FAILED - no account_id in JWT');
+            console.log('[majorLogin] FAILED - no account_id');
             return null;
         }
         console.log('[majorLogin] OK account_id:', accId);
@@ -802,31 +339,24 @@ async function majorLogin(accessToken, openId, lang) {
     }
 }
 
-// ============================================================
-// MAIN FLOW
-// ============================================================
 async function createAccount(region, namePrefix) {
     for (let attempt = 0; attempt < 5; attempt++) {
         try {
-            console.log(`\n[createAccount] ===== attempt ${attempt + 1}/5 =====`);
+            console.log(`[createAccount] attempt ${attempt + 1}/5`);
             const password = generateSecurePassword();
             const name = randomName(namePrefix);
             const lang = REGION_LANG[region.toUpperCase()] || 'en';
 
-            console.log(`[createAccount] password=${password} name=${name} lang=${lang}`);
-
             const reg = await registerGuest(password);
-            if (!reg) { console.log(`[createAccount] STOP at registerGuest`); continue; }
+            if (!reg) continue;
 
             const tok = await grantToken(reg.uid, password);
-            if (!tok) { console.log(`[createAccount] STOP at grantToken`); continue; }
+            if (!tok) continue;
 
             await majorRegister(tok.access_token, tok.open_id, name, lang);
 
             const login = await majorLogin(tok.access_token, tok.open_id, lang);
-            if (!login) { console.log(`[createAccount] STOP at majorLogin`); continue; }
-
-            console.log(`[createAccount] SUCCESS uid=${reg.uid} account_id=${login.account_id}`);
+            if (!login) continue;
 
             return {
                 uid: reg.uid,
@@ -840,13 +370,10 @@ async function createAccount(region, namePrefix) {
             console.log(`[createAccount] EXCEPTION:`, e.message);
         }
     }
-    console.log(`[createAccount] ALL 5 ATTEMPTS FAILED`);
+    console.log(`[createAccount] ALL ATTEMPTS FAILED`);
     return null;
 }
 
-// ============================================================
-// HANDLER
-// ============================================================
 export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -860,23 +387,18 @@ export default async function handler(req, res) {
     const namePrefix = req.query.name || 'Yax';
     const region = req.query.region || 'ID';
 
-    console.log(`\n===================== REQUEST =====================`);
-    console.log(`count=${count} name=${namePrefix} region=${region}`);
-    console.log(`===================================================`);
+    console.log(`REQUEST count=${count} name=${namePrefix} region=${region}`);
 
     const accounts = [];
     let attempts = 0;
 
     for (let i = 0; i < count; i++) {
-        console.log(`\n--- Generating account ${i + 1}/${count} ---`);
         attempts++;
         const acc = await createAccount(region, namePrefix);
         if (acc) accounts.push(acc);
     }
 
-    console.log(`\n===================== RESULT =====================`);
-    console.log(`created=${accounts.length} attempts=${attempts}`);
-    console.log(`==================================================`);
+    console.log(`RESULT created=${accounts.length} attempts=${attempts}`);
 
     return res.status(200).json({
         accounts,
