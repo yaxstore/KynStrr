@@ -9,6 +9,15 @@ const REGION_LANG = {
 };
 
 // ============================================================
+// LOGGER — biar keliatan di Vercel Logs
+// ============================================================
+function log(step, data) {
+  const time = new Date().toISOString();
+  const msg = typeof data === 'string' ? data : JSON.stringify(data);
+  console.log(`[${time}] [${step}] ${msg}`);
+}
+
+// ============================================================
 // HELPER: fetch dengan timeout
 // ============================================================
 async function fetchWithTimeout(url, options = {}, timeout = 15000) {
@@ -25,9 +34,10 @@ async function fetchWithTimeout(url, options = {}, timeout = 15000) {
 }
 
 // ============================================================
-// MAJOR LOGIN — ambil JWT Garena
+// MAJOR LOGIN
 // ============================================================
 export async function performMajorLogin(accessToken, openId, lang) {
+  log('MAJOR_LOGIN', `start | lang=${lang}`);
   try {
     const parts = [
       Buffer.from('1a1320323032352d30382d33302030353a31393a3231220966726565206669726528013a08312e3131342e31334232416e64726f6964204f532039202f204150492d3238202850492f72656c2e636a772e32303232303531382e313134313333294a0848616e6468656c64520a41544d204d6f62696c735a045749464960b60a68ee0572033330307a1f41524d7637205646507633204e454f4e20564d48207c2032343030207c20328001c90f8a010f416472656e6f2028544d292036343092010d4f70656e474c20455320332e329a012b476f6f676c657c64666134616234622d396463342d343534652d383036352d653730633733336661353366a2010e3130352e3233352e3133392e3931aa0102', 'hex'),
@@ -36,7 +46,6 @@ export async function performMajorLogin(accessToken, openId, lang) {
     ];
 
     let raw = Buffer.concat(parts).toString('hex');
-    // Replace placeholder token & open_id
     raw = raw.replace(
       '61666366626631333333346265343230333665346637343263383062393536333434626564373630616339316233616666396236303761363130616234333930',
       Buffer.from(accessToken).toString('hex')
@@ -46,8 +55,10 @@ export async function performMajorLogin(accessToken, openId, lang) {
       Buffer.from(openId).toString('hex')
     );
     const payloadBuf = Buffer.from(raw, 'hex');
+    log('MAJOR_LOGIN', `payload built | len=${payloadBuf.length}`);
 
     const encrypted = encryptApiPayload(payloadBuf.toString('hex'));
+    log('MAJOR_LOGIN', `encrypted | len=${encrypted.length}`);
 
     const resp = await fetchWithTimeout('https://loginbp.ppmainecoonghj.com/MajorLogin', {
       method: 'POST',
@@ -64,17 +75,27 @@ export async function performMajorLogin(accessToken, openId, lang) {
       body: encrypted,
     }, 15000);
 
-    if (resp.status !== 200) return null;
+    log('MAJOR_LOGIN', `HTTP=${resp.status}`);
     const text = await resp.text();
+    log('MAJOR_LOGIN', `resp body (first 300): ${text.slice(0, 300)}`);
+
+    if (resp.status !== 200) {
+      log('MAJOR_LOGIN', `FAILED at HTTP level`);
+      return null;
+    }
 
     const jwtIdx = text.indexOf('eyJ');
-    if (jwtIdx === -1) return null;
+    if (jwtIdx === -1) {
+      log('MAJOR_LOGIN', `FAILED - no JWT in response`);
+      return null;
+    }
 
     let token = text.slice(jwtIdx);
     const firstDot = token.indexOf('.');
     const secondDot = token.indexOf('.', firstDot + 1);
     if (secondDot === -1) return null;
     token = token.slice(0, secondDot + 44);
+    log('MAJOR_LOGIN', `JWT extracted | len=${token.length}`);
 
     const payloadB64 = token.split('.')[1];
     const padding = '='.repeat((4 - (payloadB64.length % 4)) % 4);
@@ -83,10 +104,15 @@ export async function performMajorLogin(accessToken, openId, lang) {
     );
 
     const accountId = decoded.account_id || decoded.external_id;
-    if (!accountId) return null;
+    if (!accountId) {
+      log('MAJOR_LOGIN', `FAILED - no account_id in JWT`);
+      return null;
+    }
 
+    log('MAJOR_LOGIN', `SUCCESS | account_id=${accountId}`);
     return { account_id: String(accountId), jwt_token: token, decoded };
   } catch (e) {
+    log('MAJOR_LOGIN', `EXCEPTION: ${e.message}`);
     return null;
   }
 }
@@ -95,10 +121,12 @@ export async function performMajorLogin(accessToken, openId, lang) {
 // GENERATE 1 AKUN GARENA
 // ============================================================
 export async function generateGarenaAccount(region, prefix = 'Yax') {
+  log('GEN_START', `region=${region} prefix=${prefix}`);
   try {
     const password = generateUltraSecurePassword();
+    log('STEP_1', `password generated`);
 
-    // STEP 1: Register guest
+    // ============ STEP 1: REGISTER GUEST ============
     const regPayload = JSON.stringify({
       app_id: 100067,
       client_type: 2,
@@ -106,6 +134,8 @@ export async function generateGarenaAccount(region, prefix = 'Yax') {
       source: 2,
     });
     const regSig = generateSignature(regPayload);
+    log('STEP_1', `payload=${regPayload}`);
+    log('STEP_1', `signature=${regSig}`);
 
     const regResp = await fetchWithTimeout('https://100067.connect.garena.com/api/v2/oauth/guest:register', {
       method: 'POST',
@@ -122,12 +152,34 @@ export async function generateGarenaAccount(region, prefix = 'Yax') {
       body: regPayload,
     }, 15000);
 
-    if (regResp.status !== 200) return null;
-    const regJson = await regResp.json();
-    if (regJson.code !== 0) return null;
-    const uid = regJson.data.uid;
+    log('STEP_1', `HTTP=${regResp.status}`);
 
-    // STEP 2: Grant token
+    const regText = await regResp.text();
+    log('STEP_1', `response body: ${regText.slice(0, 500)}`);
+
+    if (regResp.status !== 200) {
+      log('STEP_1', `FAILED at HTTP level`);
+      return null;
+    }
+
+    let regJson;
+    try {
+      regJson = JSON.parse(regText);
+    } catch (e) {
+      log('STEP_1', `FAILED - response bukan JSON`);
+      return null;
+    }
+
+    if (regJson.code !== 0) {
+      log('STEP_1', `FAILED - code=${regJson.code} msg=${regJson.msg || regJson.message || 'no msg'}`);
+      return null;
+    }
+
+    const uid = regJson.data.uid;
+    log('STEP_1', `SUCCESS | uid=${uid}`);
+
+    // ============ STEP 2: GRANT TOKEN ============
+    log('STEP_2', `requesting token...`);
     const tokPayload = JSON.stringify({
       client_id: 100067,
       client_secret: '2ee44819e9b4598845141067b281621874d0d5d7af9d8f7e00c1e54715b7d1e3',
@@ -153,14 +205,33 @@ export async function generateGarenaAccount(region, prefix = 'Yax') {
       body: tokPayload,
     }, 15000);
 
-    if (tokResp.status !== 200) return null;
-    const tokJson = await tokResp.json();
-    if (tokJson.code !== 0) return null;
+    log('STEP_2', `HTTP=${tokResp.status}`);
+    const tokText = await tokResp.text();
+    log('STEP_2', `response body: ${tokText.slice(0, 500)}`);
+
+    if (tokResp.status !== 200) {
+      log('STEP_2', `FAILED at HTTP level`);
+      return null;
+    }
+
+    let tokJson;
+    try {
+      tokJson = JSON.parse(tokText);
+    } catch (e) {
+      log('STEP_2', `FAILED - response bukan JSON`);
+      return null;
+    }
+
+    if (tokJson.code !== 0) {
+      log('STEP_2', `FAILED - code=${tokJson.code} msg=${tokJson.msg || tokJson.message || 'no msg'}`);
+      return null;
+    }
 
     const accessToken = tokJson.data.access_token;
     const openId = tokJson.data.open_id;
+    log('STEP_2', `SUCCESS | access_token len=${accessToken.length} open_id len=${openId.length}`);
 
-    // STEP 3: XOR encode open_id
+    // ============ STEP 3: XOR OPEN_ID ============
     const keystream = [
       0x30, 0x30, 0x30, 0x32, 0x30, 0x31, 0x37, 0x30, 0x30, 0x30, 0x30, 0x30, 0x32, 0x30, 0x31, 0x37,
       0x30, 0x30, 0x30, 0x30, 0x30, 0x32, 0x30, 0x31, 0x37, 0x30, 0x30, 0x30, 0x30, 0x30, 0x32, 0x30,
@@ -169,10 +240,12 @@ export async function generateGarenaAccount(region, prefix = 'Yax') {
     for (let i = 0; i < openId.length; i++) {
       fieldBuf[i] = openId.charCodeAt(i) ^ keystream[i % keystream.length];
     }
+    log('STEP_3', `XOR done | field len=${fieldBuf.length}`);
 
-    // STEP 4: MajorRegister
+    // ============ STEP 4: MAJOR REGISTER ============
     const name = `${prefix}${Math.floor(Math.random() * 90000) + 10000}`;
     const lang = REGION_LANG[region.toUpperCase()] || 'en';
+    log('STEP_4', `name=${name} lang=${lang}`);
 
     const proto = buildProto({
       1: name,
@@ -187,9 +260,12 @@ export async function generateGarenaAccount(region, prefix = 'Yax') {
       16: 1,
       17: 1,
     });
-    const encMajor = encryptApiPayload(proto.toString('hex'));
+    log('STEP_4', `proto built | len=${proto.length}`);
 
-    await fetchWithTimeout('https://loginbp.ppmainecoonghj.com/MajorRegister', {
+    const encMajor = encryptApiPayload(proto.toString('hex'));
+    log('STEP_4', `encrypted | len=${encMajor.length}`);
+
+    const majResp = await fetchWithTimeout('https://loginbp.ppmainecoonghj.com/MajorRegister', {
       method: 'POST',
       headers: {
         'User-Agent': 'UnityPlayer/2018.4.12f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)',
@@ -205,9 +281,19 @@ export async function generateGarenaAccount(region, prefix = 'Yax') {
       body: encMajor,
     }, 15000);
 
-    // STEP 5: MajorLogin — ambil JWT
+    log('STEP_4', `HTTP=${majResp.status}`);
+    const majText = await majResp.text();
+    log('STEP_4', `response body: ${majText.slice(0, 300)}`);
+
+    // ============ STEP 5: MAJOR LOGIN ============
+    log('STEP_5', `calling performMajorLogin...`);
     const loginData = await performMajorLogin(accessToken, openId, lang);
-    if (!loginData) return null;
+    if (!loginData) {
+      log('STEP_5', `FAILED`);
+      return null;
+    }
+
+    log('STEP_5', `SUCCESS | account_id=${loginData.account_id}`);
 
     return {
       uid: String(uid),
@@ -219,6 +305,7 @@ export async function generateGarenaAccount(region, prefix = 'Yax') {
       created_at: new Date().toISOString(),
     };
   } catch (e) {
+    log('GEN_EXCEPTION', `${e.message} | ${e.stack?.slice(0, 200)}`);
     return null;
   }
 }
