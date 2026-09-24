@@ -1,53 +1,61 @@
-import jwt from 'jsonwebtoken';
+import { generateGarenaAccount } from './lib/garena.js';
+import { checkRarity } from './lib/rarity.js';
 
-export default function handler(req, res) {
+export const config = { maxDuration: 60 };
+
+export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-admin-token');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // Support GET & POST
-  let body = {};
-  if (req.method === 'POST') {
-    body = req.body || {};
-  } else if (req.method === 'GET') {
-    body = req.query || {};
-  } else {
-    return res.status(405).json({ success: false, error: 'Method not allowed' });
+  let body = req.method === 'POST' ? (req.body || {}) : (req.query || {});
+
+  // Auth opsional — bisa lu aktifin kalau mau protected
+  const ADMIN_ONLY = false;
+  if (ADMIN_ONLY) {
+    const token = req.headers['x-admin-token'] || body.admin_token;
+    if (!token || token !== process.env.ADMIN_TOKEN) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
   }
 
-  // Auth: header OR query
-  const token = req.headers['x-admin-token'] || req.query.admin_token;
-  if (!token || token !== process.env.ADMIN_TOKEN) {
-    return res.status(401).json({ success: false, error: 'Unauthorized' });
+  const count = Math.min(parseInt(body.count) || 1, 5); // max 5 per request
+  const prefix = body.name || body.prefix || 'Yax';
+  const region = (body.region || 'ID').toUpperCase();
+  const rarityThreshold = parseInt(body.rarity_threshold) || 6;
+
+  const accounts = [];
+  let attempts = 0;
+  const maxAttempts = count * 4;
+
+  while (accounts.length < count && attempts < maxAttempts) {
+    attempts++;
+    const acc = await generateGarenaAccount(region, prefix);
+    if (!acc) continue;
+
+    const rarity = checkRarity(acc.account_id, rarityThreshold);
+    accounts.push({
+      account_id: acc.account_id,
+      created_at: acc.created_at,
+      jwt_token: acc.jwt_token,
+      name: acc.name,
+      password: acc.password,
+      patterns: rarity.patterns,
+      rarity: rarity.level || 'NORMAL',
+      rarity_reason: rarity.reason,
+      rarity_score: rarity.score,
+      region: acc.region,
+      uid: acc.uid,
+    });
   }
-
-  const { owner = 'unknown', plan = 'free', days = 30 } = body;
-
-  if (days > 365) {
-    return res.status(400).json({ success: false, error: 'Max 365 days' });
-  }
-
-  const apiKey = jwt.sign(
-    {
-      owner,
-      plan,
-      type: 'api_key',
-      version: 'v2'
-    },
-    process.env.JWT_SECRET,
-    { expiresIn: `${days}d` }
-  );
 
   res.json({
-    success: true,
-    api_key: apiKey,
-    owner,
-    plan,
-    expires_in_days: Number(days),
-    issued_at: new Date().toISOString(),
-    version: 'v2',
-    warning: 'Simpan key ini. Kalau ilang, gak bisa recover!'
+    accounts,
+    attempts_made: attempts,
+    success: accounts.length > 0,
+    total_created: accounts.length,
+    total_requested: count,
   });
 }
