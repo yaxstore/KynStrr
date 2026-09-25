@@ -1,6 +1,7 @@
 // ============================================================
 // Garena Free Fire Guest Account Generator
 // Port dari 30.py — hit server Garena langsung
+// + DEBUG LOGGING AKTIF
 // ============================================================
 
 import crypto from "crypto";
@@ -41,12 +42,11 @@ function hmacSha256(payload) {
   return crypto.createHmac("sha256", API_SECRET_KEY).update(payload).digest("hex");
 }
 
-// XOR keystream untuk open_id (dari 30.py)
 const XOR_KEYSTREAM = [
   0x30,0x30,0x30,0x32,0x30,0x31,0x37,0x30,
+  0x30,0x30,0x30,0x30,0x32,0x30,0x31,0x37,
   0x30,0x30,0x30,0x30,0x30,0x32,0x30,0x31,
-  0x37,0x30,0x30,0x30,0x30,0x30,0x32,0x30,
-  0x31,0x37,0x30,0x30,0x30,0x30,0x30,0x32
+  0x37,0x30,0x30,0x30,0x30,0x30,0x32,0x30
 ];
 
 function applyXorKeystream(openId) {
@@ -96,7 +96,29 @@ class ProtoBuilder {
   }
 }
 
-// ===== MAJOR LOGIN PAYLOAD (fixed bytes dari 30.py) =====
+// ===== MAJOR LOGIN PAYLOAD =====
+
+function replaceBytes(buf, search, replace) {
+  const out = [];
+  let i = 0;
+  while (i < buf.length) {
+    let match = false;
+    if (i + search.length <= buf.length) {
+      match = true;
+      for (let j = 0; j < search.length; j++) {
+        if (buf[i + j] !== search[j]) { match = false; break; }
+      }
+    }
+    if (match) {
+      for (const b of replace) out.push(b);
+      i += search.length;
+    } else {
+      out.push(buf[i]);
+      i++;
+    }
+  }
+  return Buffer.from(out);
+}
 
 function buildMajorLoginPayload(accessToken, openId, lang) {
   const part1 = Buffer.from([
@@ -164,42 +186,19 @@ function buildMajorLoginPayload(accessToken, openId, lang) {
   const accBuf = Buffer.from(accessToken, "utf-8");
   const oidBuf = Buffer.from(openId, "utf-8");
 
-  const replaced = replaceBytes(
-    replaceBytes(combined, Buffer.from("afcfbf13334be42036e4f742c80b956344bed760ac91b3aff9b607a610ab4390"), accBuf),
+  return replaceBytes(
+    replaceBytes(combined,
+      Buffer.from("afcfbf13334be42036e4f742c80b956344bed760ac91b3aff9b607a610ab4390"),
+      accBuf),
     Buffer.from("1d8ec0240ede109973f3321b9354b44d"),
     oidBuf
   );
-
-  return replaced;
-}
-
-function replaceBytes(buf, search, replace) {
-  const out = [];
-  let i = 0;
-  while (i < buf.length) {
-    let match = true;
-    if (i + search.length <= buf.length) {
-      for (let j = 0; j < search.length; j++) {
-        if (buf[i + j] !== search[j]) { match = false; break; }
-      }
-    } else {
-      match = false;
-    }
-    if (match) {
-      out.push(...replace);
-      i += search.length;
-    } else {
-      out.push(buf[i]);
-      i++;
-    }
-  }
-  return Buffer.from(out);
 }
 
 // ===== HTTP SESSION =====
 
 function randomIp() {
-  return [1, 2, 3, 4].map(() => Math.floor(Math.random() * 254) + 1).join(".");
+  return [1,2,3,4].map(() => Math.floor(Math.random() * 254) + 1).join(".");
 }
 
 function makeSession() {
@@ -207,8 +206,7 @@ function makeSession() {
   const session = wrapper(axios.create({
     jar,
     timeout: 15000,
-    validateStatus: () => true,
-    headers: { "Accept-Encoding": "gzip, deflate" }
+    validateStatus: () => true
   }));
   const fakeIp = randomIp();
   session.defaults.headers.common["X-Forwarded-For"] = fakeIp;
@@ -220,8 +218,6 @@ function makeSession() {
   session.defaults.headers.common["Forwarded"] = `for=${fakeIp};proto=https`;
   return session;
 }
-
-// ===== GENERATE PASSWORD =====
 
 function generatePassword() {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -242,7 +238,6 @@ async function guestRegister(session, password) {
     "User-Agent": "GarenaMSDK/4.0.44(25028RN03A ;Android 15;ar;EG;app 1.132.1 2019121229;)",
     "Connection": "Keep-Alive",
     "Accept": "application/json",
-    "Accept-Encoding": "gzip",
     "Authorization": `Signature ${sig}`,
     "Content-Type": "application/json; charset=utf-8",
     "Cookie": DATADOME_COOKIE,
@@ -254,8 +249,10 @@ async function guestRegister(session, password) {
     regPayload, { headers }
   );
 
+  console.log(`[guestRegister] status=${r.status} body=${typeof r.data === "string" ? r.data.slice(0,300) : JSON.stringify(r.data).slice(0,300)}`);
+
   if (r.status !== 200 || !r.data || r.data.code !== 0) {
-    throw new Error(`register fail: ${r.status} ${JSON.stringify(r.data).slice(0, 200)}`);
+    throw new Error(`register fail: status=${r.status} body=${JSON.stringify(r.data).slice(0,300)}`);
   }
   return r.data.data.uid;
 }
@@ -278,7 +275,6 @@ async function grantToken(session, uid, password) {
     "User-Agent": "GarenaMSDK/4.0.44(25028RN03A ;Android 15;ar;EG;app 1.132.1 2019121229;)",
     "Connection": "Keep-Alive",
     "Accept": "application/json",
-    "Accept-Encoding": "gzip",
     "Authorization": `Signature ${sig}`,
     "Content-Type": "application/json; charset=utf-8",
     "Cookie": DATADOME_COOKIE_2,
@@ -290,8 +286,10 @@ async function grantToken(session, uid, password) {
     tokPayload, { headers }
   );
 
+  console.log(`[grantToken] status=${r.status} body=${typeof r.data === "string" ? r.data.slice(0,300) : JSON.stringify(r.data).slice(0,300)}`);
+
   if (r.status !== 200 || !r.data || r.data.code !== 0) {
-    throw new Error(`grant fail: ${r.status}`);
+    throw new Error(`grant fail: status=${r.status} body=${JSON.stringify(r.data).slice(0,300)}`);
   }
   return {
     access_token: r.data.data.access_token,
@@ -304,23 +302,13 @@ async function grantToken(session, uid, password) {
 async function majorRegister(session, accessToken, openId, name, lang) {
   const field = applyXorKeystream(openId);
   const proto = ProtoBuilder.build({
-    1: name,
-    2: accessToken,
-    3: openId,
-    5: 102000007,
-    6: 4,
-    7: 1,
-    13: 1,
-    14: field,
-    15: lang,
-    16: 1,
-    17: 1
+    1: name, 2: accessToken, 3: openId, 5: 102000007,
+    6: 4, 7: 1, 13: 1, 14: field, 15: lang, 16: 1, 17: 1
   });
   const encMajor = encryptAesCbc(proto.toString("hex"));
 
   const headers = {
     "User-Agent": "UnityPlayer/2018.4.12f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)",
-    "Accept-Encoding": "deflate, gzip",
     "X-GA-SV": "1789535859",
     "Authorization": "Bearer",
     "X-GA": "v1 1",
@@ -330,10 +318,12 @@ async function majorRegister(session, accessToken, openId, name, lang) {
     "Host": "loginbp.ppmainecoonghj.com"
   };
 
-  await session.post(
+  const r = await session.post(
     "https://loginbp.ppmainecoonghj.com/MajorRegister",
     encMajor, { headers }
   );
+
+  console.log(`[majorRegister] status=${r.status} body=${typeof r.data === "string" ? r.data.slice(0,300) : JSON.stringify(r.data).slice(0,300)}`);
 }
 
 // ===== STEP 4: MajorLogin =====
@@ -344,7 +334,6 @@ async function majorLogin(session, accessToken, openId, lang) {
 
   const headers = {
     "User-Agent": "UnityPlayer/2018.4.12f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)",
-    "Accept-Encoding": "deflate, gzip",
     "X-GA-SV": "1789535859",
     "Authorization": "Bearer",
     "X-GA": "v1 1",
@@ -360,6 +349,8 @@ async function majorLogin(session, accessToken, openId, lang) {
   );
 
   const text = typeof r.data === "string" ? r.data : JSON.stringify(r.data);
+  console.log(`[majorLogin] status=${r.status} textPreview=${text.slice(0,200)}`);
+
   const jwtIdx = text.indexOf("eyJ");
   if (jwtIdx === -1) throw new Error("no JWT in MajorLogin response");
 
@@ -388,13 +379,22 @@ async function generateOne(region, prefix) {
     const session = makeSession();
     const password = generatePassword();
     try {
+      console.log(`=== attempt ${attempt} region=${region} ===`);
+
       const uid = await guestRegister(session, password);
+      console.log(`[OK] register uid=${uid}`);
+
       const { access_token, open_id } = await grantToken(session, uid, password);
+      console.log(`[OK] grant open_id=${open_id}`);
+
       const name = `${prefix}${Math.floor(10000 + Math.random() * 90000)}`;
       const lang = REGION_LANG[region.toUpperCase()] || "en";
 
       await majorRegister(session, access_token, open_id, name, lang);
+      console.log(`[OK] majorRegister`);
+
       const { account_id, jwt_token } = await majorLogin(session, access_token, open_id, lang);
+      console.log(`[OK] majorLogin account_id=${account_id}`);
 
       return {
         account_id,
@@ -410,7 +410,11 @@ async function generateOne(region, prefix) {
         uid: Number(uid)
       };
     } catch (e) {
-      // retry
+      console.error(`[attempt ${attempt}] FAILED: ${e.message}`);
+      if (e.response) {
+        console.error(`  http_status=${e.response.status}`);
+        console.error(`  http_body=${typeof e.response.data === "string" ? e.response.data.slice(0,300) : JSON.stringify(e.response.data).slice(0,300)}`);
+      }
     }
   }
   return null;
@@ -424,10 +428,12 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.status(200).end();
 
-  const src = req.method === "POST" ? req.body || {} : req.query || {};
+  const src = req.method === "POST" ? (req.body || {}) : (req.query || {});
   const total = Math.min(parseInt(src.total || src.count || "1", 10), 10);
   const region = (src.region || "ID").toUpperCase();
   const prefix = (src.name || src.prefix || "User").toString().slice(0, 12);
+
+  console.log(`=== REQUEST total=${total} region=${region} prefix=${prefix} ===`);
 
   const accounts = [];
   let attempts = 0;
