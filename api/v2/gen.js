@@ -1,5 +1,5 @@
 // ============================================================
-// Self-contained Garena Account Generator — PATCHED
+// Self-contained Garena Account Generator — FINAL
 // Proxy residential untuk bypass rate-limit IP Vercel
 // ============================================================
 
@@ -7,11 +7,7 @@ import crypto from "crypto";
 import axios from "axios";
 import { wrapper } from "axios-cookiejar-support";
 import { CookieJar } from "tough-cookie";
-
-// ---- Fix import https-proxy-agent (support v5–v7) ----
-import httpsProxyAgentPkg from "https-proxy-agent";
-const HttpsProxyAgent =
-  httpsProxyAgentPkg.HttpsProxyAgent || httpsProxyAgentPkg;
+import { HttpsProxyAgent } from "https-proxy-agent"; // v7 named export
 
 // ===== CONFIG =====
 const AES_KEY = Buffer.from([89,103,38,116,99,37,68,69,117,104,54,37,90,99,94,56]);
@@ -40,7 +36,6 @@ const REGION_LANG = {
 // ===== PROXY VALIDATOR =====
 function isValidProxy(url) {
   if (!url || typeof url !== "string") return false;
-  // Tolak placeholder literal
   if (url.includes("username:password") || url.includes("provider.com")) return false;
   try {
     const u = new URL(url);
@@ -207,7 +202,7 @@ function makeSession() {
   const jar = new CookieJar();
   const config = {
     jar,
-    timeout: 20000,
+    timeout: 10000,
     validateStatus: () => true
   };
 
@@ -401,4 +396,4 @@ export default async function handler(req, res) {
     total_created: accounts.length,
     total_requested: total
   });
-    }
+        }
