@@ -1,8 +1,10 @@
 {
-  "name": "kyn-strr-v2",
-  "version": "2.0.0",
+  "name": "guest-gen",
+  "version": "1.0.0",
   "type": "module",
   "dependencies": {
-    "jsonwebtoken": "^9.0.2"
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "uuid": "^9.0.1"
   }
 }
