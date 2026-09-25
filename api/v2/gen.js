@@ -1,5 +1,5 @@
 // ============================================================
-// Self-contained Garena Account Generator
+// Self-contained Garena Account Generator — PATCHED
 // Proxy residential untuk bypass rate-limit IP Vercel
 // ============================================================
 
@@ -7,7 +7,11 @@ import crypto from "crypto";
 import axios from "axios";
 import { wrapper } from "axios-cookiejar-support";
 import { CookieJar } from "tough-cookie";
-import { HttpsProxyAgent } from "https-proxy-agent";
+
+// ---- Fix import https-proxy-agent (support v5–v7) ----
+import httpsProxyAgentPkg from "https-proxy-agent";
+const HttpsProxyAgent =
+  httpsProxyAgentPkg.HttpsProxyAgent || httpsProxyAgentPkg;
 
 // ===== CONFIG =====
 const AES_KEY = Buffer.from([89,103,38,116,99,37,68,69,117,104,54,37,90,99,94,56]);
@@ -24,6 +28,7 @@ const DATADOME_COOKIE =
   "datadome=oYpIhVco_RFvLHe_T9KFd5wuY0gcQuNfrlt4rHJY5QOkwv4TGt8gPMK32MbHuBdzJyfXnXlfzNZT_2tHr2kys8AMYT2~T71QP1S78_7Pdx4JLOXdSrflPT6cOX2vsyJh";
 
 const DATADOME_COOKIE_2 =
+  process.env.DATADOME_COOKIE_2 ||
   "datadome=y23Z3X17pgkMHEt5zY8dqxC6BIf7WJMgC0RXNbqifHT7t9zajKe_hegFb1Ie9_7JixXpz7FRGVodOn~mWPk_NrqIIhUOXDYqKOahzoRQcyEy77GWEMcdA9_MqPJeM5qv";
 
 const REGION_LANG = {
@@ -31,6 +36,20 @@ const REGION_LANG = {
   ME: "ar", CIS: "ru", TH: "th", EU: "en", US: "en",
   SAC: "es", LK: "en"
 };
+
+// ===== PROXY VALIDATOR =====
+function isValidProxy(url) {
+  if (!url || typeof url !== "string") return false;
+  // Tolak placeholder literal
+  if (url.includes("username:password") || url.includes("provider.com")) return false;
+  try {
+    const u = new URL(url);
+    if (u.port && isNaN(Number(u.port))) return false;
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 // ===== CRYPTO =====
 function encryptAesCbc(plainHex) {
@@ -179,7 +198,7 @@ function buildMajorLoginPayload(accessToken, openId, lang) {
   );
 }
 
-// ===== SESSION (pakai PROXY kalau ada) =====
+// ===== SESSION =====
 function randomIp() {
   return [1,2,3,4].map(() => Math.floor(Math.random() * 254) + 1).join(".");
 }
@@ -191,10 +210,16 @@ function makeSession() {
     timeout: 20000,
     validateStatus: () => true
   };
-  if (PROXY_URL) {
-    config.httpsAgent = new HttpsProxyAgent(PROXY_URL);
-    config.proxy = false;
+
+  if (isValidProxy(PROXY_URL)) {
+    try {
+      config.httpsAgent = new HttpsProxyAgent(PROXY_URL);
+      config.proxy = false;
+    } catch (e) {
+      console.warn("[SYNT∆X] Proxy gagal di-load, lanjut tanpa proxy:", e.message);
+    }
   }
+
   const session = wrapper(axios.create(config));
   const fakeIp = randomIp();
   session.defaults.headers.common["X-Forwarded-For"] = fakeIp;
@@ -259,7 +284,7 @@ async function grantToken(session, uid, password) {
     tokPayload, { headers }
   );
   if (r.status !== 200 || !r.data || r.data.code !== 0) {
-    throw new Error(`grant fail: status=${r.status}`);
+    throw new Error(`grant fail: status=${r.status} body=${JSON.stringify(r.data).slice(0,200)}`);
   }
   return { access_token: r.data.data.access_token, open_id: r.data.data.open_id };
 }
@@ -280,7 +305,11 @@ async function majorRegister(session, accessToken, openId, name, lang) {
     "X-Unity-Version": "2018.4.12f1",
     "Host": "loginbp.ppmainecoonghj.com"
   };
-  await session.post("https://loginbp.ppmainecoonghj.com/MajorRegister", encMajor, { headers });
+  const r = await session.post("https://loginbp.ppmainecoonghj.com/MajorRegister", encMajor, { headers });
+  if (r.status !== 200) {
+    throw new Error(`majorRegister fail: status=${r.status} body=${JSON.stringify(r.data).slice(0,200)}`);
+  }
+  return r;
 }
 
 // ===== STEP 4 =====
@@ -330,7 +359,7 @@ async function generateOne(region, prefix) {
         region: region.toUpperCase(), uid: Number(uid)
       };
     } catch (e) {
-      // retry
+      console.warn(`[SYNT∆X] Attempt ${attempt + 1} gagal:`, e.message);
     }
   }
   return null;
@@ -348,11 +377,11 @@ export default async function handler(req, res) {
   const region = (src.region || "ID").toUpperCase();
   const prefix = (src.name || src.prefix || "User").toString().slice(0, 12);
 
-  if (!PROXY_URL) {
+  if (!isValidProxy(PROXY_URL)) {
     return res.status(200).json({
       accounts: [], attempts_made: 0, success: false,
       total_created: 0, total_requested: total,
-      error: "PROXY_URL belum di-set. IP Vercel langsung kena rate-limit Garena (429). Set env PROXY_URL di Vercel dashboard."
+      error: "PROXY_URL belum di-set atau invalid. Format: http://user:pass@host:port. Jangan pakai placeholder 'username:password@provider.com'."
     });
   }
 
@@ -372,4 +401,4 @@ export default async function handler(req, res) {
     total_created: accounts.length,
     total_requested: total
   });
-}
+    }
