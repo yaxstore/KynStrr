@@ -1,13 +1,11 @@
 // ============================================================
-// Self-contained Garena Account Generator — FINAL
-// Proxy residential untuk bypass rate-limit IP Vercel
+// Garena Account Generator — FINAL (manual cookie + proxy)
 // ============================================================
 
 import crypto from "crypto";
 import axios from "axios";
-import { wrapper } from "axios-cookiejar-support";
 import { CookieJar } from "tough-cookie";
-import { HttpsProxyAgent } from "https-proxy-agent"; // v7 named export
+import { HttpsProxyAgent } from "https-proxy-agent";
 
 // ===== CONFIG =====
 const AES_KEY = Buffer.from([89,103,38,116,99,37,68,69,117,104,54,37,90,99,94,56]);
@@ -15,8 +13,6 @@ const AES_IV  = Buffer.from([54,111,121,90,68,114,50,50,69,51,121,99,104,106,77,
 const API_SECRET_KEY = "2ee44819e9b4598845141067b281621874d0d5d7af9d8f7e00c1e54715b7d1e3";
 const API_HEX_KEY = API_SECRET_KEY;
 
-// PROXY (isi di Vercel env)
-// Format: http://user:pass@host:port
 const PROXY_URL = process.env.PROXY_URL || "";
 
 const DATADOME_COOKIE =
@@ -193,15 +189,15 @@ function buildMajorLoginPayload(accessToken, openId, lang) {
   );
 }
 
-// ===== SESSION =====
+// ===== SESSION (manual cookie + proxy) =====
 function randomIp() {
   return [1,2,3,4].map(() => Math.floor(Math.random() * 254) + 1).join(".");
 }
 
 function makeSession() {
   const jar = new CookieJar();
+
   const config = {
-    jar,
     timeout: 10000,
     validateStatus: () => true
   };
@@ -215,7 +211,44 @@ function makeSession() {
     }
   }
 
-  const session = wrapper(axios.create(config));
+  const session = axios.create(config);
+
+  // Request interceptor: attach cookie dari jar
+  session.interceptors.request.use(async (reqConfig) => {
+    try {
+      const cookieStr = await jar.getCookieString(reqConfig.url);
+      if (cookieStr) {
+        reqConfig.headers = reqConfig.headers || {};
+        reqConfig.headers["Cookie"] = cookieStr;
+      }
+    } catch (e) {
+      // skip
+    }
+    return reqConfig;
+  });
+
+  // Response interceptor: simpan Set-Cookie ke jar
+  session.interceptors.response.use(
+    async (response) => {
+      try {
+        const setCookie = response.headers["set-cookie"];
+        if (setCookie && Array.isArray(setCookie)) {
+          for (const c of setCookie) {
+            try {
+              await jar.setCookie(c, response.config.url);
+            } catch (e) {
+              // skip invalid cookie
+            }
+          }
+        }
+      } catch (e) {
+        // skip
+      }
+      return response;
+    },
+    (error) => Promise.reject(error)
+  );
+
   const fakeIp = randomIp();
   session.defaults.headers.common["X-Forwarded-For"] = fakeIp;
   session.defaults.headers.common["X-Real-IP"] = fakeIp;
@@ -247,10 +280,12 @@ async function guestRegister(session, password) {
     "Cookie": DATADOME_COOKIE,
     "Host": "100067.connect.garena.com"
   };
+  console.log("[DEBUG] Step 1: guestRegister");
   const r = await session.post(
     "https://100067.connect.garena.com/api/v2/oauth/guest:register",
     regPayload, { headers }
   );
+  console.log(`[DEBUG] Step 1 response: status=${r.status} body=${JSON.stringify(r.data).slice(0,300)}`);
   if (r.status !== 200 || !r.data || r.data.code !== 0) {
     throw new Error(`register fail: status=${r.status} body=${JSON.stringify(r.data).slice(0,300)}`);
   }
@@ -274,10 +309,12 @@ async function grantToken(session, uid, password) {
     "Cookie": DATADOME_COOKIE_2,
     "Host": "100067.connect.garena.com"
   };
+  console.log("[DEBUG] Step 2: grantToken");
   const r = await session.post(
     "https://100067.connect.garena.com/api/v2/oauth/guest/token:grant",
     tokPayload, { headers }
   );
+  console.log(`[DEBUG] Step 2 response: status=${r.status} body=${JSON.stringify(r.data).slice(0,300)}`);
   if (r.status !== 200 || !r.data || r.data.code !== 0) {
     throw new Error(`grant fail: status=${r.status} body=${JSON.stringify(r.data).slice(0,200)}`);
   }
@@ -300,7 +337,9 @@ async function majorRegister(session, accessToken, openId, name, lang) {
     "X-Unity-Version": "2018.4.12f1",
     "Host": "loginbp.ppmainecoonghj.com"
   };
+  console.log("[DEBUG] Step 3: majorRegister");
   const r = await session.post("https://loginbp.ppmainecoonghj.com/MajorRegister", encMajor, { headers });
+  console.log(`[DEBUG] Step 3 response: status=${r.status} body=${JSON.stringify(r.data).slice(0,300)}`);
   if (r.status !== 200) {
     throw new Error(`majorRegister fail: status=${r.status} body=${JSON.stringify(r.data).slice(0,200)}`);
   }
@@ -319,8 +358,10 @@ async function majorLogin(session, accessToken, openId, lang) {
     "X-Unity-Version": "2018.4.12f1",
     "Host": "loginbp.ppmainecoonghj.com"
   };
+  console.log("[DEBUG] Step 4: majorLogin");
   const r = await session.post("https://loginbp.ppmainecoonghj.com/MajorLogin", enc, { headers });
   const text = typeof r.data === "string" ? r.data : JSON.stringify(r.data);
+  console.log(`[DEBUG] Step 4 response: status=${r.status} body=${text.slice(0,300)}`);
   const jwtIdx = text.indexOf("eyJ");
   if (jwtIdx === -1) throw new Error("no JWT");
   let token = text.slice(jwtIdx);
@@ -341,6 +382,7 @@ async function generateOne(region, prefix) {
     const session = makeSession();
     const password = generatePassword();
     try {
+      console.log(`[DEBUG] === Attempt ${attempt + 1} ===`);
       const uid = await guestRegister(session, password);
       const { access_token, open_id } = await grantToken(session, uid, password);
       const name = `${prefix}${Math.floor(10000 + Math.random() * 90000)}`;
@@ -376,9 +418,12 @@ export default async function handler(req, res) {
     return res.status(200).json({
       accounts: [], attempts_made: 0, success: false,
       total_created: 0, total_requested: total,
-      error: "PROXY_URL belum di-set atau invalid. Format: http://user:pass@host:port. Jangan pakai placeholder 'username:password@provider.com'."
+      error: "PROXY_URL belum di-set atau invalid. Format: http://user:pass@host:port."
     });
   }
+
+  console.log(`[DEBUG] Request: total=${total} region=${region} prefix=${prefix}`);
+  console.log(`[DEBUG] Proxy valid: ${isValidProxy(PROXY_URL)}`);
 
   const accounts = [];
   let attempts = 0;
@@ -396,4 +441,4 @@ export default async function handler(req, res) {
     total_created: accounts.length,
     total_requested: total
   });
-        }
+            }
