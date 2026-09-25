@@ -1,5 +1,5 @@
 // ============================================================
-// Garena Account Generator — FINAL (manual cookie + proxy)
+// Garena Account Generator — FINAL v2 (anti-timeout)
 // ============================================================
 
 import crypto from "crypto";
@@ -33,6 +33,7 @@ const REGION_LANG = {
 function isValidProxy(url) {
   if (!url || typeof url !== "string") return false;
   if (url.includes("username:password") || url.includes("provider.com")) return false;
+  if (url.includes("ip-proxy-asli") || url.includes("test:test")) return false;
   try {
     const u = new URL(url);
     if (u.port && isNaN(Number(u.port))) return false;
@@ -189,7 +190,7 @@ function buildMajorLoginPayload(accessToken, openId, lang) {
   );
 }
 
-// ===== SESSION (manual cookie + proxy) =====
+// ===== SESSION =====
 function randomIp() {
   return [1,2,3,4].map(() => Math.floor(Math.random() * 254) + 1).join(".");
 }
@@ -198,7 +199,7 @@ function makeSession() {
   const jar = new CookieJar();
 
   const config = {
-    timeout: 10000,
+    timeout: 8000,   // turunin dari 10s ke 8s
     validateStatus: () => true
   };
 
@@ -207,7 +208,7 @@ function makeSession() {
       config.httpsAgent = new HttpsProxyAgent(PROXY_URL);
       config.proxy = false;
     } catch (e) {
-      console.warn("[SYNT∆X] Proxy gagal di-load, lanjut tanpa proxy:", e.message);
+      console.warn("[SYNT∆X] Proxy gagal di-load:", e.message);
     }
   }
 
@@ -221,9 +222,7 @@ function makeSession() {
         reqConfig.headers = reqConfig.headers || {};
         reqConfig.headers["Cookie"] = cookieStr;
       }
-    } catch (e) {
-      // skip
-    }
+    } catch (e) { /* skip */ }
     return reqConfig;
   });
 
@@ -234,16 +233,10 @@ function makeSession() {
         const setCookie = response.headers["set-cookie"];
         if (setCookie && Array.isArray(setCookie)) {
           for (const c of setCookie) {
-            try {
-              await jar.setCookie(c, response.config.url);
-            } catch (e) {
-              // skip invalid cookie
-            }
+            try { await jar.setCookie(c, response.config.url); } catch (e) { /* skip */ }
           }
         }
-      } catch (e) {
-        // skip
-      }
+      } catch (e) { /* skip */ }
       return response;
     },
     (error) => Promise.reject(error)
@@ -378,7 +371,7 @@ async function majorLogin(session, accessToken, openId, lang) {
 
 // ===== ORCHESTRATOR =====
 async function generateOne(region, prefix) {
-  for (let attempt = 0; attempt < 5; attempt++) {
+  for (let attempt = 0; attempt < 2; attempt++) {   // ← turun dari 5 ke 2
     const session = makeSession();
     const password = generatePassword();
     try {
@@ -423,22 +416,45 @@ export default async function handler(req, res) {
   }
 
   console.log(`[DEBUG] Request: total=${total} region=${region} prefix=${prefix}`);
+  console.log(`[DEBUG] PROXY_URL (prefix): ${PROXY_URL.slice(0, 40)}`);
   console.log(`[DEBUG] Proxy valid: ${isValidProxy(PROXY_URL)}`);
 
-  const accounts = [];
-  let attempts = 0;
-  const maxAttempts = total * 5;
-  while (accounts.length < total && attempts < maxAttempts) {
-    attempts++;
-    const acc = await generateOne(region, prefix);
-    if (acc) accounts.push(acc);
+  // === HARD TIMEOUT 50s ===
+  let timedOut = false;
+  const hardTimeout = new Promise((resolve) =>
+    setTimeout(() => { timedOut = true; resolve(null); }, 50000)
+  );
+
+  const generateTask = (async () => {
+    const accounts = [];
+    let attempts = 0;
+    const maxAttempts = total * 2;   // ← turun dari total*5 ke total*2
+    while (accounts.length < total && attempts < maxAttempts) {
+      attempts++;
+      const acc = await generateOne(region, prefix);
+      if (acc) accounts.push(acc);
+    }
+    return { accounts, attempts };
+  })();
+
+  const result = await Promise.race([generateTask, hardTimeout]);
+
+  if (timedOut || result === null) {
+    return res.status(200).json({
+      accounts: [],
+      attempts_made: 0,
+      success: false,
+      total_created: 0,
+      total_requested: total,
+      error: "Timeout 50s — proxy terlalu lambat atau Garena lambat respon. Coba turunin total atau ganti proxy lebih cepat."
+    });
   }
 
   return res.status(200).json({
-    accounts,
-    attempts_made: attempts,
-    success: accounts.length > 0,
-    total_created: accounts.length,
+    accounts: result.accounts,
+    attempts_made: result.attempts,
+    success: result.accounts.length > 0,
+    total_created: result.accounts.length,
     total_requested: total
   });
-            }
+    }
