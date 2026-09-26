@@ -1,9 +1,15 @@
 {
   "version": 2,
-  "functions": {
-    "api/**/*.js": {
-      "maxDuration": 300,
-      "memory": 1024
+  "builds": [
+    {
+      "src": "api/v2/gen.py",
+      "use": "@vercel/python"
     }
-  }
+  ],
+  "routes": [
+    {
+      "src": "/api/v2/gen",
+      "dest": "api/v2/gen.py"
+    }
+  ]
 }
