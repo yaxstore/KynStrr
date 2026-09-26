@@ -9,11 +9,12 @@ import secrets
 import codecs
 import base64
 import time
+from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 
-# === KEYS DARI SCRIPT ASLI ===
+# === KEYS ===
 API_HEX_KEY = "2ee44819e9b4598845141067b281621874d0d5d7af9d8f7e00c1e54715b7d1e3"
 API_SECRET_KEY = "2ee44819e9b4598845141067b281621874d0d5d7af9d8f7e00c1e54715b7d1e3"
 AES_KEY = bytes([89, 103, 38, 116, 99, 37, 68, 69, 117, 104, 54, 37, 90, 99, 94, 56])
@@ -27,7 +28,7 @@ REGION_LANG = {
 
 def generate_password():
     hex_part = ''.join(secrets.choice('0123456789ABCDEF') for _ in range(16))
-    return f"YAX_{hex_part}"
+    return f"Kyn_{hex_part}"
 
 def generate_signature(payload: str) -> str:
     return hmac.new(API_SECRET_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()
@@ -192,7 +193,7 @@ def major_login(session, access_token, open_id, lang):
         pass
     return None
 
-def create_account(region="ID", prefix="Yax"):
+def create_account(region="ID", prefix="User"):
     session = requests.Session()
     session.headers.update({'Connection': 'keep-alive'})
     
@@ -204,7 +205,7 @@ def create_account(region="ID", prefix="Yax"):
     if not access_token:
         return None
     
-    name = f"{prefix}{random.randint(10000, 99999)}"
+    name = f"{prefix}{''.join(random.choices(string.ascii_uppercase, k=6))}"
     lang = REGION_LANG.get(region.upper(), "en")
     
     major_register(session, name, access_token, open_id, lang)
@@ -212,13 +213,17 @@ def create_account(region="ID", prefix="Yax"):
     
     if login_data:
         return {
-            "uid": int(uid),
-            "password": password,
             "account_id": login_data["account_id"],
-            "jwt": login_data["jwt_token"],
+            "created_at": datetime.utcnow().isoformat(),
+            "jwt_token": login_data["jwt_token"],
             "name": name,
+            "password": password,
+            "patterns": [],
+            "rarity": "NORMAL",
+            "rarity_reason": "",
+            "rarity_score": 0,
             "region": region,
-            "status": "success"
+            "uid": int(uid)
         }
     return None
 
@@ -227,25 +232,26 @@ class handler(BaseHTTPRequestHandler):
         try:
             query = parse_qs(urlparse(self.path).query)
             region = query.get("region", ["ID"])[0].upper()
-            count = min(int(query.get("count", ["1"])[0]), 3)
-            prefix = query.get("prefix", ["Yax"])[0]
+            count = min(int(query.get("count", ["1"])[0]), 5)
+            prefix = query.get("prefix", ["User"])[0]
             
-            results = []
+            accounts = []
+            attempts = 0
+            
             for i in range(count):
+                attempts += 1
                 acc = create_account(region, prefix)
                 if acc:
-                    results.append(acc)
-                else:
-                    results.append({"status": "failed"})
+                    accounts.append(acc)
                 if i < count - 1:
-                    time.sleep(1.5)
+                    time.sleep(1.2)
             
             response = {
-                "success": True,
-                "count": len([r for r in results if r.get("status") == "success"]),
-                "data": results if count > 1 else results[0],
-                "source": "Garena Official (from original script)",
-                "endpoint": "/api/v2/gen"
+                "accounts": accounts,
+                "attempts_made": attempts,
+                "success": len(accounts) > 0,
+                "total_created": len(accounts),
+                "total_requested": count
             }
             
             self.send_response(200)
@@ -258,7 +264,14 @@ class handler(BaseHTTPRequestHandler):
             self.send_response(500)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode())
+            self.wfile.write(json.dumps({
+                "accounts": [],
+                "attempts_made": 0,
+                "success": False,
+                "total_created": 0,
+                "total_requested": 0,
+                "error": str(e)
+            }).encode())
 
     def do_OPTIONS(self):
         self.send_response(200)
