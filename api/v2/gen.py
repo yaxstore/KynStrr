@@ -26,8 +26,8 @@ REGION_LANG = {
 }
 
 def generate_password():
-    s = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(12))
-    return f"Yax{s}"
+    hex_part = ''.join(secrets.choice('0123456789ABCDEF') for _ in range(16))
+    return f"YAX_{hex_part}"
 
 def generate_signature(payload: str) -> str:
     return hmac.new(API_SECRET_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()
@@ -83,7 +83,6 @@ def register_guest(session):
             data = resp.json()
             if resp.status_code == 200 and data.get("code") == 0:
                 return data['data']['uid'], password
-            # Rate limit
             if data.get("code") == 1006:
                 time.sleep(1.8 + attempt * 0.7)
                 continue
