@@ -8,6 +8,7 @@ import string
 import secrets
 import codecs
 import base64
+import time
 from urllib.parse import urlparse, parse_qs
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
@@ -59,54 +60,73 @@ def build_proto(fields_dict: dict) -> bytes:
     return b''.join(create_field(k, v) for k, v in fields_dict.items())
 
 def register_guest(session):
-    password = generate_password()
-    reg_payload = json.dumps({"app_id": 100067, "client_type": 2, "password": password, "source": 2}, separators=(',', ':'))
-    headers = {
-        "User-Agent": "GarenaMSDK/4.0.44(25028RN03A ;Android 15;ar;EG;app 1.132.1 2019121229;)",
-        "Connection": "Keep-Alive",
-        "Accept": "application/json",
-        "Accept-Encoding": "gzip",
-        "Authorization": f"Signature {generate_signature(reg_payload)}",
-        "Content-Type": "application/json; charset=utf-8",
-        "Host": "100067.connect.garena.com",
-    }
-    try:
-        resp = session.post("https://100067.connect.garena.com/api/v2/oauth/guest:register",
-                            headers=headers, data=reg_payload, timeout=10, verify=False)
-        data = resp.json()
-        if resp.status_code == 200 and data.get("code") == 0:
-            return data['data']['uid'], password
-    except:
-        pass
+    for attempt in range(5):
+        password = generate_password()
+        reg_payload = json.dumps({"app_id": 100067, "client_type": 2, "password": password, "source": 2}, separators=(',', ':'))
+        headers = {
+            "User-Agent": "GarenaMSDK/4.0.44(25028RN03A ;Android 15;ar;EG;app 1.132.1 2019121229;)",
+            "Connection": "Keep-Alive",
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip",
+            "Authorization": f"Signature {generate_signature(reg_payload)}",
+            "Content-Type": "application/json; charset=utf-8",
+            "Host": "100067.connect.garena.com",
+        }
+        try:
+            resp = session.post(
+                "https://100067.connect.garena.com/api/v2/oauth/guest:register",
+                headers=headers,
+                data=reg_payload,
+                timeout=12,
+                verify=False
+            )
+            data = resp.json()
+            if resp.status_code == 200 and data.get("code") == 0:
+                return data['data']['uid'], password
+            # Rate limit
+            if data.get("code") == 1006:
+                time.sleep(1.8 + attempt * 0.7)
+                continue
+        except Exception:
+            time.sleep(1.2)
     return None, None
 
 def get_token(session, uid, password):
-    tok_payload = json.dumps({
-        "client_id": 100067,
-        "client_secret": API_HEX_KEY,
-        "client_type": 2,
-        "device_id": "02-344afb0e-593c-40b7-92f2-171972f74807",
-        "password": password,
-        "response_type": "token",
-        "uid": uid,
-    }, separators=(',', ':'))
-    headers = {
-        "User-Agent": "GarenaMSDK/4.0.44(25028RN03A ;Android 15;ar;EG;app 1.132.1 2019121229;)",
-        "Connection": "Keep-Alive",
-        "Accept": "application/json",
-        "Accept-Encoding": "gzip",
-        "Authorization": f"Signature {generate_signature(tok_payload)}",
-        "Content-Type": "application/json; charset=utf-8",
-        "Host": "100067.connect.garena.com",
-    }
-    try:
-        resp = session.post("https://100067.connect.garena.com/api/v2/oauth/guest/token:grant",
-                            headers=headers, data=tok_payload, timeout=10, verify=False)
-        data = resp.json()
-        if resp.status_code == 200 and data.get("code") == 0:
-            return data['data']['access_token'], data['data']['open_id']
-    except:
-        pass
+    for attempt in range(3):
+        tok_payload = json.dumps({
+            "client_id": 100067,
+            "client_secret": API_HEX_KEY,
+            "client_type": 2,
+            "device_id": "02-344afb0e-593c-40b7-92f2-171972f74807",
+            "password": password,
+            "response_type": "token",
+            "uid": uid,
+        }, separators=(',', ':'))
+        headers = {
+            "User-Agent": "GarenaMSDK/4.0.44(25028RN03A ;Android 15;ar;EG;app 1.132.1 2019121229;)",
+            "Connection": "Keep-Alive",
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip",
+            "Authorization": f"Signature {generate_signature(tok_payload)}",
+            "Content-Type": "application/json; charset=utf-8",
+            "Host": "100067.connect.garena.com",
+        }
+        try:
+            resp = session.post(
+                "https://100067.connect.garena.com/api/v2/oauth/guest/token:grant",
+                headers=headers,
+                data=tok_payload,
+                timeout=12,
+                verify=False
+            )
+            data = resp.json()
+            if resp.status_code == 200 and data.get("code") == 0:
+                return data['data']['access_token'], data['data']['open_id']
+            if data.get("code") == 1006:
+                time.sleep(1.5)
+                continue
+        except Exception:
+            time.sleep(1)
     return None, None
 
 def major_register(session, name, access_token, open_id, lang):
@@ -155,7 +175,7 @@ def major_login(session, access_token, open_id, lang):
         'X-Unity-Version': "2018.4.12f1"
     }
     try:
-        resp = session.post("https://loginbp.ppmainecoonghj.com/MajorLogin", headers=headers, data=encrypted, verify=False, timeout=10)
+        resp = session.post("https://loginbp.ppmainecoonghj.com/MajorLogin", headers=headers, data=encrypted, verify=False, timeout=12)
         if resp.status_code == 200:
             jwt_idx = resp.text.find("eyJ")
             if jwt_idx != -1:
@@ -208,16 +228,18 @@ class handler(BaseHTTPRequestHandler):
         try:
             query = parse_qs(urlparse(self.path).query)
             region = query.get("region", ["ID"])[0].upper()
-            count = min(int(query.get("count", ["1"])[0]), 5)
+            count = min(int(query.get("count", ["1"])[0]), 3)
             prefix = query.get("prefix", ["Yax"])[0]
             
             results = []
-            for _ in range(count):
+            for i in range(count):
                 acc = create_account(region, prefix)
                 if acc:
                     results.append(acc)
                 else:
                     results.append({"status": "failed"})
+                if i < count - 1:
+                    time.sleep(1.5)
             
             response = {
                 "success": True,
