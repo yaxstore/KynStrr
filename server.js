@@ -1,17 +1,21 @@
 // ══════════════════════════════════════════════════════════════════════════
-//   IyanXd API  //  NODE.JS EDITION  //  v1.1 (FIXED)
+//   IyanXd API  //  NODE.JS EDITION  //  v1.2 (FINAL FIX)
 //   Owner  : IyanXd
-//   Deploy : Render / Railway / Vercel
+//   Deploy : Render / Railway
 // ══════════════════════════════════════════════════════════════════════════
 
 const express = require('express');
 const axios = require('axios');
 const crypto = require('crypto');
 const cors = require('cors');
+const https = require('https');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// ── HTTPS agent untuk bypass SSL verification (kalau perlu) ──
+const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
 // ── CONFIG ──
 const CONFIG = {
@@ -27,6 +31,7 @@ const CONFIG = {
   GAME_VERSION: "2.132.4",
   HTTP_TIMEOUT: 15000,
 
+  // Endpoint register (dari code Python yang jalan)
   URL_GUEST_REGISTER: "https://100067.connect.garena.com/api/v2/oauth/guest:register",
   URL_TOKEN_GRANT:    "https://100067.connect.garena.com/oauth/guest/token/grant",
 
@@ -173,39 +178,115 @@ function checkRarity(accountId) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-//  STEP 1: REGISTER GUEST
+//  REGISTER — MULTI VARIANT (biar tahan kalau 1 variant error)
 // ══════════════════════════════════════════════════════════════════════════
 async function registerGuest(password) {
-  try {
-    const payload = { app_id: CONFIG.APP_ID, client_type: 2, password, source: 2 };
-    const bodyJson = JSON.stringify(payload);
-    const signature = crypto.createHmac("sha256", CONFIG.HEX_KEY).update(bodyJson).digest("hex");
+  const variants = [
+    // V1: original
+    async () => {
+      const payload = { app_id: 100067, client_type: 2, password, source: 2 };
+      const bodyJson = JSON.stringify(payload);
+      const sig = crypto.createHmac("sha256", CONFIG.HEX_KEY).update(bodyJson).digest("hex");
+      const r = await axios.post(CONFIG.URL_GUEST_REGISTER, bodyJson, {
+        headers: {
+          "User-Agent": randomUA(),
+          "Connection": "Keep-Alive",
+          "Accept": "application/json",
+          "Accept-Encoding": "gzip",
+          "Authorization": `Signature ${sig}`,
+          "Content-Type": "application/json; charset=utf-8",
+          "Host": "100067.connect.garena.com",
+        },
+        timeout: CONFIG.HTTP_TIMEOUT, validateStatus: () => true, responseType: "text",
+        httpsAgent,
+      });
+      return { status: r.status, data: r.data };
+    },
+    // V2: tanp Accept-Encoding
+    async () => {
+      const payload = { app_id: 100067, client_type: 2, password, source: 2 };
+      const bodyJson = JSON.stringify(payload);
+      const sig = crypto.createHmac("sha256", CONFIG.HEX_KEY).update(bodyJson).digest("hex");
+      const r = await axios.post(CONFIG.URL_GUEST_REGISTER, bodyJson, {
+        headers: {
+          "User-Agent": randomUA(),
+          "Authorization": `Signature ${sig}`,
+          "Content-Type": "application/json; charset=utf-8",
+        },
+        timeout: CONFIG.HTTP_TIMEOUT, validateStatus: () => true, responseType: "text",
+        httpsAgent,
+      });
+      return { status: r.status, data: r.data };
+    },
+    // V3: source=1
+    async () => {
+      const payload = { app_id: 100067, client_type: 2, password, source: 1 };
+      const bodyJson = JSON.stringify(payload);
+      const sig = crypto.createHmac("sha256", CONFIG.HEX_KEY).update(bodyJson).digest("hex");
+      const r = await axios.post(CONFIG.URL_GUEST_REGISTER, bodyJson, {
+        headers: {
+          "User-Agent": randomUA(),
+          "Authorization": `Signature ${sig}`,
+          "Content-Type": "application/json; charset=utf-8",
+        },
+        timeout: CONFIG.HTTP_TIMEOUT, validateStatus: () => true, responseType: "text",
+        httpsAgent,
+      });
+      return { status: r.status, data: r.data };
+    },
+    // V4: pakai x-www-form-urlencoded
+    async () => {
+      const body = `app_id=100067&client_type=2&password=${password}&source=2`;
+      const sig = crypto.createHmac("sha256", CONFIG.HEX_KEY).update(body).digest("hex");
+      const r = await axios.post(CONFIG.URL_GUEST_REGISTER, body, {
+        headers: {
+          "User-Agent": randomUA(),
+          "Authorization": `Signature ${sig}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        timeout: CONFIG.HTTP_TIMEOUT, validateStatus: () => true, responseType: "text",
+        httpsAgent,
+      });
+      return { status: r.status, data: r.data };
+    },
+    // V5: JSON tanpa spasi persis (kadang penting)
+    async () => {
+      const bodyJson = `{"app_id":100067,"client_type":2,"password":"${password}","source":2}`;
+      const sig = crypto.createHmac("sha256", CONFIG.HEX_KEY).update(bodyJson).digest("hex");
+      const r = await axios.post(CONFIG.URL_GUEST_REGISTER, bodyJson, {
+        headers: {
+          "User-Agent": randomUA(),
+          "Authorization": `Signature ${sig}`,
+          "Content-Type": "application/json; charset=utf-8",
+        },
+        timeout: CONFIG.HTTP_TIMEOUT, validateStatus: () => true, responseType: "text",
+        httpsAgent,
+      });
+      return { status: r.status, data: r.data };
+    },
+  ];
 
-    const headers = {
-      "User-Agent": randomUA(),
-      "Connection": "Keep-Alive",
-      "Accept": "application/json",
-      "Accept-Encoding": "gzip",
-      "Authorization": `Signature ${signature}`,
-      "Content-Type": "application/json; charset=utf-8",
-      "Host": "100067.connect.garena.com",
-    };
-
-    const r = await axios.post(CONFIG.URL_GUEST_REGISTER, bodyJson, {
-      headers, timeout: CONFIG.HTTP_TIMEOUT,
-      validateStatus: () => true,
-    });
-    if (r.status === 200 && r.data.code === 0 && r.data.data && r.data.data.uid) {
-      return String(r.data.data.uid);
+  for (let i = 0; i < variants.length; i++) {
+    try {
+      const r = await variants[i]();
+      // cek berhasil
+      if (r.status === 200) {
+        try {
+          const j = typeof r.data === "string" ? JSON.parse(r.data) : r.data;
+          if (j.code === 0 && j.data && j.data.uid) {
+            return { uid: String(j.data.uid), variant: `V${i + 1}` };
+          }
+        } catch (e) {}
+      }
+    } catch (e) {
+      continue;
     }
-    return null;
-  } catch (e) {
-    return null;
   }
+  return null;
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-//  STEP 2: GRANT TOKEN
+//  GRANT TOKEN
 // ══════════════════════════════════════════════════════════════════════════
 async function grantToken(uid, password) {
   try {
@@ -223,7 +304,7 @@ async function grantToken(uid, password) {
 
     const r = await axios.post(CONFIG.URL_TOKEN_GRANT, body, {
       headers, timeout: CONFIG.HTTP_TIMEOUT,
-      validateStatus: () => true,
+      validateStatus: () => true, httpsAgent,
     });
     if (r.status === 200 && r.data.open_id && r.data.access_token) {
       return { open_id: r.data.open_id, access_token: r.data.access_token };
@@ -235,7 +316,7 @@ async function grantToken(uid, password) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-//  STEP 3: MAJOR REGISTER
+//  MAJOR REGISTER
 // ══════════════════════════════════════════════════════════════════════════
 async function majorRegister(access_token, open_id, uid, password, region, nick) {
   try {
@@ -253,19 +334,10 @@ async function majorRegister(access_token, open_id, uid, password, region, nick)
     }
 
     const regMsg = {
-      1: nick,
-      2: access_token,
-      3: open_id,
-      5: 102000007,
-      6: 4,
-      7: 1,
-      13: 1,
-      14: fieldF14,
-      15: lang,
-      16: 2,
-      20: CONFIG.GAME_VERSION,
-      21: 1,
-      22: FIELD_22,
+      1: nick, 2: access_token, 3: open_id,
+      5: 102000007, 6: 4, 7: 1, 13: 1,
+      14: fieldF14, 15: lang, 16: 2,
+      20: CONFIG.GAME_VERSION, 21: 1, 22: FIELD_22,
     };
     const data = buildProto(regMsg);
     const encHex = encryptApi(data.toString("hex"));
@@ -288,19 +360,17 @@ async function majorRegister(access_token, open_id, uid, password, region, nick)
     };
 
     const r = await axios.post(url, encBuffer, {
-      headers,
-      timeout: CONFIG.HTTP_TIMEOUT,
-      responseType: "text",
-      validateStatus: () => true,
+      headers, timeout: CONFIG.HTTP_TIMEOUT,
+      responseType: "text", validateStatus: () => true, httpsAgent,
     });
     return { status: r.status, body: String(r.data).slice(0, 300) };
   } catch (e) {
-    return { status: null, body: e.message + " | " + (e.response ? String(e.response.data).slice(0, 200) : "") };
+    return { status: null, body: e.message };
   }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-//  STEP 4: MAJOR LOGIN
+//  MAJOR LOGIN
 // ══════════════════════════════════════════════════════════════════════════
 async function majorLogin(access_token, open_id, region) {
   try {
@@ -352,10 +422,8 @@ async function majorLogin(access_token, open_id, region) {
     };
 
     const r = await axios.post(url, encBuffer, {
-      headers,
-      timeout: CONFIG.HTTP_TIMEOUT,
-      responseType: "text",
-      validateStatus: () => true,
+      headers, timeout: CONFIG.HTTP_TIMEOUT,
+      responseType: "text", validateStatus: () => true, httpsAgent,
     });
 
     const text = String(r.data);
@@ -394,8 +462,9 @@ async function generateOne(region = "ID", namePrefix = "IYAN", passPrefix = "IYA
   try {
     const password = genPassword(passPrefix);
 
-    const uid = await registerGuest(password);
-    if (!uid) return null;
+    const regResult = await registerGuest(password);
+    if (!regResult) return null;
+    const uid = regResult.uid;
 
     const tok = await grantToken(uid, password);
     if (!tok) return null;
@@ -429,6 +498,7 @@ async function generateOne(region = "ID", namePrefix = "IYAN", passPrefix = "IYA
       is_rare: rarity.is_rare,
       open_id: tok.open_id,
       access_token: tok.access_token,
+      register_variant: regResult.variant,
       created_at: new Date().toISOString(),
     };
   } catch (e) {
@@ -443,12 +513,13 @@ app.get("/", (req, res) => {
   res.json({
     status: true,
     brand: "IyanXd",
-    version: "1.1.0",
+    version: "1.2.0",
     owner: "IyanXd",
     endpoints: {
       "/gen":          "GET — generate akun",
       "/gen_batch":    "GET — generate batch",
       "/debug_gen":    "GET — debug step-by-step",
+      "/test_register":"GET — test variasi register",
       "/rarity_check": "GET — cek rarity account_id",
       "/health":       "GET — health check",
     },
@@ -527,6 +598,65 @@ app.get("/rarity_check", (req, res) => {
   res.json({ status: true, account_id: accountId, ...rarity });
 });
 
+// ── TEST REGISTER VARIANTS ──
+app.get("/test_register", async (req, res) => {
+  const password = genPassword("IYAN");
+  const log = [];
+
+  const variants = [
+    { name: "V1_original_json", ct: "application/json; charset=utf-8", body: null },
+    { name: "V2_no_accept", ct: "application/json; charset=utf-8", body: null },
+    { name: "V3_source_1", ct: "application/json; charset=utf-8", body: null },
+    { name: "V4_urlencoded", ct: "application/x-www-form-urlencoded", body: null },
+    { name: "V5_json_tight", ct: "application/json; charset=utf-8", body: null },
+  ];
+
+  for (let i = 0; i < variants.length; i++) {
+    const v = variants[i];
+    let bodyJson;
+    if (i === 2) {
+      bodyJson = JSON.stringify({ app_id: 100067, client_type: 2, password, source: 1 });
+    } else if (i === 3) {
+      bodyJson = `app_id=100067&client_type=2&password=${password}&source=2`;
+    } else if (i === 4) {
+      bodyJson = `{"app_id":100067,"client_type":2,"password":"${password}","source":2}`;
+    } else {
+      bodyJson = JSON.stringify({ app_id: 100067, client_type: 2, password, source: 2 });
+    }
+
+    const sig = crypto.createHmac("sha256", CONFIG.HEX_KEY).update(bodyJson).digest("hex");
+
+    const headers = {
+      "User-Agent": randomUA(),
+      "Authorization": `Signature ${sig}`,
+      "Content-Type": v.ct,
+    };
+    if (i === 0) {
+      headers["Connection"] = "Keep-Alive";
+      headers["Accept"] = "application/json";
+      headers["Accept-Encoding"] = "gzip";
+      headers["Host"] = "100067.connect.garena.com";
+    }
+
+    try {
+      const r = await axios.post(CONFIG.URL_GUEST_REGISTER, bodyJson, {
+        headers, timeout: 10000, validateStatus: () => true,
+        responseType: "text", httpsAgent,
+      });
+      log.push({
+        variant: v.name,
+        status: r.status,
+        body: String(r.data).slice(0, 200),
+      });
+    } catch (e) {
+      log.push({ variant: v.name, error: e.message });
+    }
+  }
+
+  res.json({ status: true, password, results: log });
+});
+
+// ── DEBUG GEN ──
 app.get("/debug_gen", async (req, res) => {
   const region = (req.query.region || "ID").toUpperCase();
   const log = [];
@@ -534,56 +664,25 @@ app.get("/debug_gen", async (req, res) => {
   const password = genPassword("IYAN");
   log.push(`[1] password: ${password}`);
 
-  // Step 1
-  const payload = { app_id: CONFIG.APP_ID, client_type: 2, password, source: 2 };
-  const bodyJson = JSON.stringify(payload);
-  const signature = crypto.createHmac("sha256", CONFIG.HEX_KEY).update(bodyJson).digest("hex");
-  const headersReg = {
-    "User-Agent": randomUA(),
-    "Connection": "Keep-Alive",
-    "Accept": "application/json",
-    "Accept-Encoding": "gzip",
-    "Authorization": `Signature ${signature}`,
-    "Content-Type": "application/json; charset=utf-8",
-    "Host": "100067.connect.garena.com",
-  };
-
-  let uid;
-  try {
-    const r = await axios.post(CONFIG.URL_GUEST_REGISTER, bodyJson, {
-      headers: headersReg, timeout: CONFIG.HTTP_TIMEOUT, validateStatus: () => true,
-    });
-    log.push(`[1] register HTTP ${r.status}`);
-    log.push(`[1] body: ${JSON.stringify(r.data).slice(0, 200)}`);
-    if (r.status !== 200 || r.data.code !== 0) {
-      return res.json({ status: false, step: "register", log });
-    }
-    uid = String(r.data.data.uid);
-    log.push(`[1] ✅ uid=${uid}`);
-  } catch (e) {
-    log.push(`[1] EXC: ${e.message}`);
-    return res.json({ status: false, step: "register_exc", log });
+  // Step 1: register (pakai multi-variant)
+  const regResult = await registerGuest(password);
+  if (!regResult) {
+    log.push(`[1] ❌ register gagal di semua variant`);
+    return res.json({ status: false, step: "register_all_failed", log });
   }
+  const uid = regResult.uid;
+  log.push(`[1] ✅ uid=${uid} (variant: ${regResult.variant})`);
 
-  // Step 2
+  // Step 2: grant
   let openId, accessToken;
   try {
-    const headers = { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": randomUA() };
-    const body = new URLSearchParams({
-      uid, password,
-      response_type: "token",
-      client_type: "2",
-      client_secret: CONFIG.HEX_KEY_HEX,
-      client_id: "100067",
-    }).toString();
-    const r = await axios.post(CONFIG.URL_TOKEN_GRANT, body, {
-      headers, timeout: CONFIG.HTTP_TIMEOUT, validateStatus: () => true,
-    });
-    log.push(`[2] grant HTTP ${r.status}`);
-    log.push(`[2] body: ${JSON.stringify(r.data).slice(0, 200)}`);
-    if (!r.data.open_id) return res.json({ status: false, step: "grant_no_openid", log });
-    openId = r.data.open_id;
-    accessToken = r.data.access_token;
+    const tok = await grantToken(uid, password);
+    if (!tok) {
+      log.push(`[2] ❌ grant gagal`);
+      return res.json({ status: false, step: "grant_fail", log });
+    }
+    openId = tok.open_id;
+    accessToken = tok.access_token;
     log.push(`[2] ✅ open_id=${openId.slice(0, 30)}...`);
   } catch (e) {
     log.push(`[2] EXC: ${e.message}`);
@@ -592,38 +691,30 @@ app.get("/debug_gen", async (req, res) => {
 
   // Step 2.5: MajorRegister
   const nick = genNickname("IYAN");
-  try {
-    const regResult = await majorRegister(accessToken, openId, uid, password, region, nick);
-    log.push(`[2.5] MajorRegister HTTP ${regResult.status}`);
-    log.push(`[2.5] body: ${regResult.body}`);
-  } catch (e) {
-    log.push(`[2.5] EXC: ${e.message}`);
-  }
+  const regResp = await majorRegister(accessToken, openId, uid, password, region, nick);
+  log.push(`[2.5] MajorRegister HTTP ${regResp.status}`);
+  log.push(`[2.5] body: ${regResp.body}`);
 
   // Step 3: MajorLogin
-  try {
-    const login = await majorLogin(accessToken, openId, region);
-    if (login && !login.error) {
-      log.push(`[3] ✅ account_id=${login.account_id}`);
-      const rarity = checkRarity(login.account_id);
-      return res.json({
-        status: true,
-        step: "done",
-        uid, password,
-        open_id: openId,
-        account_id: login.account_id,
-        jwt_token: login.jwt_token.slice(0, 60) + "...",
-        tier: rarity.tier,
-        score: rarity.score,
-        log,
-      });
-    }
-    log.push(`[3] ❌ MajorLogin failed: ${login ? login.body : "unknown"}`);
-    return res.json({ status: false, step: "major_fail", log });
-  } catch (e) {
-    log.push(`[3] EXC: ${e.message}`);
-    return res.json({ status: false, step: "major_exc", log });
+  const login = await majorLogin(accessToken, openId, region);
+  if (login && !login.error) {
+    log.push(`[3] ✅ account_id=${login.account_id}`);
+    const rarity = checkRarity(login.account_id);
+    return res.json({
+      status: true,
+      step: "done",
+      uid, password,
+      open_id: openId,
+      account_id: login.account_id,
+      jwt_token: login.jwt_token.slice(0, 60) + "...",
+      tier: rarity.tier,
+      score: rarity.score,
+      log,
+    });
   }
+
+  log.push(`[3] ❌ MajorLogin failed: ${login ? login.body : "unknown"}`);
+  return res.json({ status: false, step: "major_fail", log });
 });
 
 // ── 404 ──
@@ -636,16 +727,8 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`
   ╔══════════════════════════════════════════════╗
-  ║   IyanXd API SERVER — Node.js Edition v1.1   ║
+  ║   IyanXd API SERVER — Node.js v1.2           ║
   ║   Port: ${PORT}                                  
   ╚══════════════════════════════════════════════╝
-
-  Endpoints:
-   GET /              → info
-   GET /health        → health check
-   GET /gen           → generate 1 akun
-   GET /gen_batch     → generate batch
-   GET /debug_gen     → debug step-by-step
-   GET /rarity_check  → cek rarity
   `);
 });
