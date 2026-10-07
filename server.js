@@ -1,5 +1,5 @@
 // ══════════════════════════════════════════════════════════════════════════
-//   IyanXd API  //  NODE.JS EDITION  //  v1.0
+//   IyanXd API  //  NODE.JS EDITION  //  v1.1 (FIXED)
 //   Owner  : IyanXd
 //   Deploy : Render / Railway / Vercel
 // ══════════════════════════════════════════════════════════════════════════
@@ -17,9 +17,9 @@ app.use(express.json());
 const CONFIG = {
   AES_KEY: Buffer.from([89,103,38,116,99,37,68,69,117,104,54,37,90,99,94,56]),
   AES_IV:  Buffer.from([54,111,121,90,68,114,50,50,69,51,121,99,104,106,77,37]),
+  HEX_KEY_HEX: "2ee44819e9b4598845141067b281621874d0d5d7af9d8f7e00c1e54715b7d1e3",
   HEX_KEY: Buffer.from(
-    "326565343438313965396234353938383435313431303637623238313632313837" +
-    "34643064356437616639643866376530306331653534373135623764316533",
+    "2ee44819e9b4598845141067b281621874d0d5d7af9d8f7e00c1e54715b7d1e3",
     "hex"
   ),
   APP_ID: 100067,
@@ -124,20 +124,22 @@ function buildProto(fields) {
   for (const [k, v] of Object.entries(fields)) {
     const key = parseInt(k);
     if (typeof v === "number") {
-      parts.push(encodeVarint((key << 3) | 0), encodeVarint(v));
+      parts.push(encodeVarint((key << 3) | 0));
+      parts.push(encodeVarint(v));
     } else if (typeof v === "string" || Buffer.isBuffer(v)) {
-      const ev = Buffer.isBuffer(v) ? v : Buffer.from(v);
-      parts.push(encodeVarint((key << 3) | 2), encodeVarint(ev.length), ev);
+      const ev = Buffer.isBuffer(v) ? v : Buffer.from(v, "utf8");
+      parts.push(encodeVarint((key << 3) | 2));
+      parts.push(encodeVarint(ev.length));
+      parts.push(ev);
     }
   }
   return Buffer.concat(parts);
 }
 
-// ── AES ENCRYPT ──
+// ── AES ENCRYPT (PKCS7 manual) ──
 function encryptApi(plainHex) {
   const cipher = crypto.createCipheriv("aes-128-cbc", CONFIG.AES_KEY, CONFIG.AES_IV);
   const data = Buffer.from(plainHex, "hex");
-  // pad manually (PKCS7)
   const padLen = 16 - (data.length % 16);
   const padded = Buffer.concat([data, Buffer.alloc(padLen, padLen)]);
   return Buffer.concat([cipher.update(padded), cipher.final()]).toString("hex");
@@ -170,25 +172,28 @@ function checkRarity(accountId) {
   return { is_rare: score >= 12, score, tier, detail: detail || "-" };
 }
 
-// ── STEP 1: REGISTER GUEST ──
+// ══════════════════════════════════════════════════════════════════════════
+//  STEP 1: REGISTER GUEST
+// ══════════════════════════════════════════════════════════════════════════
 async function registerGuest(password) {
-  const payload = { app_id: CONFIG.APP_ID, client_type: 2, password, source: 2 };
-  const bodyJson = JSON.stringify(payload);
-  const signature = crypto.createHmac("sha256", CONFIG.HEX_KEY).update(bodyJson).digest("hex");
-
-  const headers = {
-    "User-Agent": randomUA(),
-    "Connection": "Keep-Alive",
-    "Accept": "application/json",
-    "Accept-Encoding": "gzip",
-    "Authorization": `Signature ${signature}`,
-    "Content-Type": "application/json; charset=utf-8",
-    "Host": "100067.connect.garena.com",
-  };
-
   try {
+    const payload = { app_id: CONFIG.APP_ID, client_type: 2, password, source: 2 };
+    const bodyJson = JSON.stringify(payload);
+    const signature = crypto.createHmac("sha256", CONFIG.HEX_KEY).update(bodyJson).digest("hex");
+
+    const headers = {
+      "User-Agent": randomUA(),
+      "Connection": "Keep-Alive",
+      "Accept": "application/json",
+      "Accept-Encoding": "gzip",
+      "Authorization": `Signature ${signature}`,
+      "Content-Type": "application/json; charset=utf-8",
+      "Host": "100067.connect.garena.com",
+    };
+
     const r = await axios.post(CONFIG.URL_GUEST_REGISTER, bodyJson, {
       headers, timeout: CONFIG.HTTP_TIMEOUT,
+      validateStatus: () => true,
     });
     if (r.status === 200 && r.data.code === 0 && r.data.data && r.data.data.uid) {
       return String(r.data.data.uid);
@@ -199,23 +204,26 @@ async function registerGuest(password) {
   }
 }
 
-// ── STEP 2: GRANT TOKEN ──
+// ══════════════════════════════════════════════════════════════════════════
+//  STEP 2: GRANT TOKEN
+// ══════════════════════════════════════════════════════════════════════════
 async function grantToken(uid, password) {
-  const headers = {
-    "Content-Type": "application/x-www-form-urlencoded",
-    "User-Agent": randomUA(),
-  };
-  const body = new URLSearchParams({
-    uid, password,
-    response_type: "token",
-    client_type: "2",
-    client_secret: CONFIG.HEX_KEY.toString(),
-    client_id: "100067",
-  }).toString();
-
   try {
+    const headers = {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "User-Agent": randomUA(),
+    };
+    const body = new URLSearchParams({
+      uid, password,
+      response_type: "token",
+      client_type: "2",
+      client_secret: CONFIG.HEX_KEY_HEX,
+      client_id: "100067",
+    }).toString();
+
     const r = await axios.post(CONFIG.URL_TOKEN_GRANT, body, {
       headers, timeout: CONFIG.HTTP_TIMEOUT,
+      validateStatus: () => true,
     });
     if (r.status === 200 && r.data.open_id && r.data.access_token) {
       return { open_id: r.data.open_id, access_token: r.data.access_token };
@@ -226,7 +234,9 @@ async function grantToken(uid, password) {
   }
 }
 
-// ── STEP 3: MAJOR REGISTER ──
+// ══════════════════════════════════════════════════════════════════════════
+//  STEP 3: MAJOR REGISTER
+// ══════════════════════════════════════════════════════════════════════════
 async function majorRegister(access_token, open_id, uid, password, region, nick) {
   try {
     const lang = CONFIG.REGION_LANG[region.toUpperCase()] || "id";
@@ -237,19 +247,29 @@ async function majorRegister(access_token, open_id, uid, password, region, nick)
       0x30,0x30,0x30,0x30,0x30,0x32,0x30,0x31,
       0x37,0x30,0x30,0x30,0x30,0x30,0x32,0x30,
     ];
-    let fieldF14 = Buffer.alloc(open_id.length);
+    const fieldF14 = Buffer.alloc(open_id.length);
     for (let i = 0; i < open_id.length; i++) {
       fieldF14[i] = open_id.charCodeAt(i) ^ keystream[i % keystream.length];
     }
 
     const regMsg = {
-      1: nick, 2: access_token, 3: open_id,
-      5: 102000007, 6: 4, 7: 1, 13: 1,
-      14: fieldF14, 15: lang, 16: 2,
-      20: CONFIG.GAME_VERSION, 21: 1, 22: FIELD_22,
+      1: nick,
+      2: access_token,
+      3: open_id,
+      5: 102000007,
+      6: 4,
+      7: 1,
+      13: 1,
+      14: fieldF14,
+      15: lang,
+      16: 2,
+      20: CONFIG.GAME_VERSION,
+      21: 1,
+      22: FIELD_22,
     };
     const data = buildProto(regMsg);
     const encHex = encryptApi(data.toString("hex"));
+    const encBuffer = Buffer.from(encHex, "hex");
 
     const base = CONFIG.REGION_ENDPOINTS[region.toUpperCase()] || "https://loginbp.ppmainecoonghj.com";
     const url = `${base}/MajorRegister`;
@@ -262,22 +282,26 @@ async function majorRegister(access_token, open_id, uid, password, region, nick)
       "Authorization": "Bearer",
       "X-GA": "v1 1",
       "ReleaseVersion": CONFIG.RELEASE_VER,
-      "Content-Type": "application/x-www-form-urlencoded",
+      "Content-Type": "application/octet-stream",
       "X-Unity-Version": "2018.4.12f1",
+      "Content-Length": encBuffer.length.toString(),
     };
 
-    const r = await axios.post(url, Buffer.from(encHex, "hex"), {
+    const r = await axios.post(url, encBuffer, {
       headers,
       timeout: CONFIG.HTTP_TIMEOUT,
       responseType: "text",
+      validateStatus: () => true,
     });
-    return { status: r.status, body: String(r.data).slice(0, 200) };
+    return { status: r.status, body: String(r.data).slice(0, 300) };
   } catch (e) {
-    return { status: null, body: e.message };
+    return { status: null, body: e.message + " | " + (e.response ? String(e.response.data).slice(0, 200) : "") };
   }
 }
 
-// ── STEP 4: MAJOR LOGIN ──
+// ══════════════════════════════════════════════════════════════════════════
+//  STEP 4: MAJOR LOGIN
+// ══════════════════════════════════════════════════════════════════════════
 async function majorLogin(access_token, open_id, region) {
   try {
     const lang = CONFIG.REGION_LANG[region.toUpperCase()] || "id";
@@ -296,7 +320,7 @@ async function majorLogin(access_token, open_id, region) {
       22: open_id, 23: "4", 24: "Handheld",
       25: model, 26: lang, 29: access_token, 30: 1,
       41: "Telkomsel", 42: "WIFI",
-      57: Buffer.from("1ac4b80ecf0478a44203bf8fac6120f5"),
+      57: Buffer.from("1ac4b80ecf0478a44203bf8fac6120f5", "utf8"),
       60: 30000, 61: 30000, 62: 2519, 63: 243,
       64: 32357, 65: 34308, 66: 32357, 67: 34308, 73: 1,
       76: 2, 78: 2, 79: 1,
@@ -308,6 +332,7 @@ async function majorLogin(access_token, open_id, region) {
     };
     const data = buildProto(payload);
     const encHex = encryptApi(data.toString("hex"));
+    const encBuffer = Buffer.from(encHex, "hex");
 
     const base = CONFIG.REGION_ENDPOINTS[region.toUpperCase()] || "https://loginbp.ppmainecoonghj.com";
     const url = `${base}/MajorLogin`;
@@ -321,14 +346,16 @@ async function majorLogin(access_token, open_id, region) {
       "X-GA": "v1 1",
       "X-Ga-Sv": "1789534056",
       "ReleaseVersion": CONFIG.RELEASE_VER,
-      "Content-Type": "application/x-www-form-urlencoded",
+      "Content-Type": "application/octet-stream",
       "X-Unity-Version": "2018.4.12f1",
+      "Content-Length": encBuffer.length.toString(),
     };
 
-    const r = await axios.post(url, Buffer.from(encHex, "hex"), {
+    const r = await axios.post(url, encBuffer, {
       headers,
       timeout: CONFIG.HTTP_TIMEOUT,
       responseType: "text",
+      validateStatus: () => true,
     });
 
     const text = String(r.data);
@@ -354,13 +381,15 @@ async function majorLogin(access_token, open_id, region) {
         } catch (e) {}
       }
     }
-    return null;
+    return { error: true, status: r.status, body: text.slice(0, 200) };
   } catch (e) {
-    return null;
+    return { error: true, status: null, body: e.message };
   }
 }
 
-// ── FULL PIPELINE ──
+// ══════════════════════════════════════════════════════════════════════════
+//  FULL PIPELINE
+// ══════════════════════════════════════════════════════════════════════════
 async function generateOne(region = "ID", namePrefix = "IYAN", passPrefix = "IYAN", minScore = 0, tierFilter = null) {
   try {
     const password = genPassword(passPrefix);
@@ -378,7 +407,7 @@ async function generateOne(region = "ID", namePrefix = "IYAN", passPrefix = "IYA
 
     // MajorLogin
     const login = await majorLogin(tok.access_token, tok.open_id, region);
-    if (!login) return null;
+    if (!login || login.error) return null;
 
     const rarity = checkRarity(login.account_id);
     if (rarity.score < minScore) return null;
@@ -414,7 +443,7 @@ app.get("/", (req, res) => {
   res.json({
     status: true,
     brand: "IyanXd",
-    version: "1.0.0",
+    version: "1.1.0",
     owner: "IyanXd",
     endpoints: {
       "/gen":          "GET — generate akun",
@@ -468,9 +497,8 @@ app.get("/gen_batch", async (req, res) => {
   const workers = Math.min(Math.max(parseInt(req.query.workers) || 4, 1), 20);
 
   const results = [];
-
-  // simple concurrent batch
   const queue = [...Array(count).keys()];
+
   const tasks = Array(workers).fill(0).map(async () => {
     while (queue.length > 0) {
       const idx = queue.shift();
@@ -522,7 +550,9 @@ app.get("/debug_gen", async (req, res) => {
 
   let uid;
   try {
-    const r = await axios.post(CONFIG.URL_GUEST_REGISTER, bodyJson, { headers: headersReg, timeout: CONFIG.HTTP_TIMEOUT });
+    const r = await axios.post(CONFIG.URL_GUEST_REGISTER, bodyJson, {
+      headers: headersReg, timeout: CONFIG.HTTP_TIMEOUT, validateStatus: () => true,
+    });
     log.push(`[1] register HTTP ${r.status}`);
     log.push(`[1] body: ${JSON.stringify(r.data).slice(0, 200)}`);
     if (r.status !== 200 || r.data.code !== 0) {
@@ -543,10 +573,12 @@ app.get("/debug_gen", async (req, res) => {
       uid, password,
       response_type: "token",
       client_type: "2",
-      client_secret: CONFIG.HEX_KEY.toString(),
+      client_secret: CONFIG.HEX_KEY_HEX,
       client_id: "100067",
     }).toString();
-    const r = await axios.post(CONFIG.URL_TOKEN_GRANT, body, { headers, timeout: CONFIG.HTTP_TIMEOUT });
+    const r = await axios.post(CONFIG.URL_TOKEN_GRANT, body, {
+      headers, timeout: CONFIG.HTTP_TIMEOUT, validateStatus: () => true,
+    });
     log.push(`[2] grant HTTP ${r.status}`);
     log.push(`[2] body: ${JSON.stringify(r.data).slice(0, 200)}`);
     if (!r.data.open_id) return res.json({ status: false, step: "grant_no_openid", log });
@@ -559,8 +591,8 @@ app.get("/debug_gen", async (req, res) => {
   }
 
   // Step 2.5: MajorRegister
+  const nick = genNickname("IYAN");
   try {
-    const nick = genNickname("IYAN");
     const regResult = await majorRegister(accessToken, openId, uid, password, region, nick);
     log.push(`[2.5] MajorRegister HTTP ${regResult.status}`);
     log.push(`[2.5] body: ${regResult.body}`);
@@ -571,7 +603,7 @@ app.get("/debug_gen", async (req, res) => {
   // Step 3: MajorLogin
   try {
     const login = await majorLogin(accessToken, openId, region);
-    if (login) {
+    if (login && !login.error) {
       log.push(`[3] ✅ account_id=${login.account_id}`);
       const rarity = checkRarity(login.account_id);
       return res.json({
@@ -586,7 +618,7 @@ app.get("/debug_gen", async (req, res) => {
         log,
       });
     }
-    log.push(`[3] ❌ MajorLogin failed`);
+    log.push(`[3] ❌ MajorLogin failed: ${login ? login.body : "unknown"}`);
     return res.json({ status: false, step: "major_fail", log });
   } catch (e) {
     log.push(`[3] EXC: ${e.message}`);
@@ -604,7 +636,7 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`
   ╔══════════════════════════════════════════════╗
-  ║   IyanXd API SERVER — Node.js Edition        ║
+  ║   IyanXd API SERVER — Node.js Edition v1.1   ║
   ║   Port: ${PORT}                                  
   ╚══════════════════════════════════════════════╝
 
@@ -615,9 +647,5 @@ app.listen(PORT, "0.0.0.0", () => {
    GET /gen_batch     → generate batch
    GET /debug_gen     → debug step-by-step
    GET /rarity_check  → cek rarity
-
-  Contoh:
-   http://localhost:${PORT}/gen?region=ID&count=1
-   http://localhost:${PORT}/debug_gen?region=ID
   `);
 });
